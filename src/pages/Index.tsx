@@ -1,12 +1,22 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import React from 'react';
+import Header from '@/components/layout/Header';
+import LeftSidebar from '@/components/layout/LeftSidebar';
+import RightSidebar from '@/components/layout/RightSidebar';
+import Feed from '@/components/feed/Feed';
 
-const Index = () => {
+const Index: React.FC = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-background">
+      <Header />
+      <LeftSidebar />
+      
+      <main className="pt-14 lg:pl-72 xl:pr-80">
+        <div className="p-4">
+          <Feed />
+        </div>
+      </main>
+      
+      <RightSidebar />
     </div>
   );
 };
