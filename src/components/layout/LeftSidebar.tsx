@@ -1,7 +1,9 @@
 import React from 'react';
-import { Home, User, Users, Bookmark, Calendar, Gift, Settings, HelpCircle, Coins } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Home, User, Users, Bookmark, Calendar, Gift, Coins, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { useAuth } from '@/contexts/AuthContext';
 
 const menuItems = [
   { icon: User, label: 'Trang cá nhân', href: '#' },
@@ -12,17 +14,36 @@ const menuItems = [
 ];
 
 const LeftSidebar: React.FC = () => {
+  const { user, signOut } = useAuth();
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
   return (
     <aside className="hidden lg:block fixed left-0 top-14 bottom-0 w-72 p-4 overflow-y-auto">
       <nav className="space-y-1">
         {/* User Profile */}
-        <Button variant="ghost" className="w-full justify-start gap-3 h-12 hover:bg-primary/10">
-          <Avatar className="h-9 w-9 ring-2 ring-primary/30">
-            <AvatarImage src="/placeholder.svg" />
-            <AvatarFallback className="bg-primary text-primary-foreground">U</AvatarFallback>
-          </Avatar>
-          <span className="font-semibold">Người dùng</span>
-        </Button>
+        {user ? (
+          <Button variant="ghost" className="w-full justify-start gap-3 h-12 hover:bg-primary/10">
+            <Avatar className="h-9 w-9 ring-2 ring-primary/30">
+              <AvatarImage src="/placeholder.svg" />
+              <AvatarFallback className="bg-primary text-primary-foreground">
+                {user.email?.charAt(0).toUpperCase() || 'U'}
+              </AvatarFallback>
+            </Avatar>
+            <span className="font-semibold truncate">{user.email?.split('@')[0] || 'Người dùng'}</span>
+          </Button>
+        ) : (
+          <Link to="/auth">
+            <Button variant="ghost" className="w-full justify-start gap-3 h-12 hover:bg-primary/10">
+              <Avatar className="h-9 w-9 ring-2 ring-primary/30">
+                <AvatarFallback className="bg-muted text-muted-foreground">?</AvatarFallback>
+              </Avatar>
+              <span className="font-semibold text-primary">Đăng nhập</span>
+            </Button>
+          </Link>
+        )}
 
         {/* Menu Items */}
         {menuItems.map((item) => (
@@ -45,6 +66,20 @@ const LeftSidebar: React.FC = () => {
             <span className="font-medium">{item.label}</span>
           </Button>
         ))}
+
+        {/* Sign Out Button */}
+        {user && (
+          <Button
+            variant="ghost"
+            onClick={handleSignOut}
+            className="w-full justify-start gap-3 h-12 text-destructive hover:bg-destructive/10"
+          >
+            <div className="p-2 rounded-lg bg-destructive/10">
+              <LogOut className="h-5 w-5" />
+            </div>
+            <span className="font-medium">Đăng xuất</span>
+          </Button>
+        )}
       </nav>
 
       {/* CAMLY Coin Rewards Card */}
@@ -56,13 +91,25 @@ const LeftSidebar: React.FC = () => {
         <p className="text-sm opacity-90 mb-3">
           Tham gia Fun Profile và nhận thưởng CAMLY COIN mỗi ngày!
         </p>
-        <Button 
-          variant="secondary" 
-          size="sm" 
-          className="w-full bg-card/20 hover:bg-card/30 text-primary-foreground border-0"
-        >
-          Nhận thưởng ngay
-        </Button>
+        {user ? (
+          <Button 
+            variant="secondary" 
+            size="sm" 
+            className="w-full bg-card/20 hover:bg-card/30 text-primary-foreground border-0"
+          >
+            Nhận thưởng ngay
+          </Button>
+        ) : (
+          <Link to="/auth">
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              className="w-full bg-card/20 hover:bg-card/30 text-primary-foreground border-0"
+            >
+              Đăng ký nhận thưởng
+            </Button>
+          </Link>
+        )}
       </div>
 
       {/* Footer Links */}
