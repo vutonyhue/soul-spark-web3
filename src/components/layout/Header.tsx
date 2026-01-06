@@ -1,22 +1,27 @@
 import React from 'react';
-import { Search, Home, Users, Bell, MessageCircle, Menu } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Search, Home, Users, Bell, MessageCircle, Menu, LogIn } from 'lucide-react';
 import HeartChakraIcon from '@/components/icons/HeartChakraIcon';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import WalletConnect from '@/components/web3/WalletConnect';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Header: React.FC = () => {
+  const { user } = useAuth();
+
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-card border-b border-border shadow-sm">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
         {/* Logo & Search */}
         <div className="flex items-center gap-3 flex-1">
-          <div className="flex items-center gap-2">
+          <Link to="/" className="flex items-center gap-2">
             <HeartChakraIcon size={36} className="text-primary animate-pulse-glow" />
             <span className="hidden sm:block text-xl font-bold text-gradient-chakra">
               Fun Profile
             </span>
-          </div>
+          </Link>
           
           <div className="hidden md:flex relative max-w-md flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -39,15 +44,33 @@ const Header: React.FC = () => {
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="relative text-muted-foreground hover:bg-primary/10">
-            <Bell className="h-5 w-5" />
-            <span className="absolute top-1 right-1 h-2 w-2 bg-destructive rounded-full" />
-          </Button>
-          <Button variant="ghost" size="icon" className="text-muted-foreground hover:bg-primary/10">
-            <MessageCircle className="h-5 w-5" />
-          </Button>
-          
-          <WalletConnect />
+          {user ? (
+            <>
+              <Button variant="ghost" size="icon" className="relative text-muted-foreground hover:bg-primary/10">
+                <Bell className="h-5 w-5" />
+                <span className="absolute top-1 right-1 h-2 w-2 bg-destructive rounded-full" />
+              </Button>
+              <Button variant="ghost" size="icon" className="text-muted-foreground hover:bg-primary/10">
+                <MessageCircle className="h-5 w-5" />
+              </Button>
+              
+              <WalletConnect />
+              
+              <Avatar className="h-9 w-9 ring-2 ring-primary/30 cursor-pointer">
+                <AvatarImage src="/placeholder.svg" />
+                <AvatarFallback className="bg-primary text-primary-foreground">
+                  {user.email?.charAt(0).toUpperCase() || 'U'}
+                </AvatarFallback>
+              </Avatar>
+            </>
+          ) : (
+            <Link to="/auth">
+              <Button className="gradient-chakra text-white font-semibold gap-2">
+                <LogIn className="h-4 w-4" />
+                <span className="hidden sm:inline">Đăng nhập</span>
+              </Button>
+            </Link>
+          )}
           
           <Button variant="ghost" size="icon" className="lg:hidden text-muted-foreground">
             <Menu className="h-5 w-5" />
