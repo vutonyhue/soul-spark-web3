@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
 
 const menuItems = [
-  { icon: User, label: 'Trang cá nhân', href: '#' },
+  { icon: User, label: 'Trang cá nhân', href: '/profile' },
   { icon: Users, label: 'Bạn bè', href: '#' },
   { icon: Bookmark, label: 'Đã lưu', href: '#' },
   { icon: Calendar, label: 'Sự kiện', href: '#' },
@@ -25,15 +25,17 @@ const LeftSidebar: React.FC = () => {
       <nav className="space-y-1">
         {/* User Profile */}
         {user ? (
-          <Button variant="ghost" className="w-full justify-start gap-3 h-12 hover:bg-primary/10">
-            <Avatar className="h-9 w-9 ring-2 ring-primary/30">
-              <AvatarImage src="/placeholder.svg" />
-              <AvatarFallback className="bg-primary text-primary-foreground">
-                {user.email?.charAt(0).toUpperCase() || 'U'}
-              </AvatarFallback>
-            </Avatar>
-            <span className="font-semibold truncate">{user.email?.split('@')[0] || 'Người dùng'}</span>
-          </Button>
+          <Link to="/profile">
+            <Button variant="ghost" className="w-full justify-start gap-3 h-12 hover:bg-primary/10">
+              <Avatar className="h-9 w-9 ring-2 ring-primary/30">
+                <AvatarImage src="/placeholder.svg" />
+                <AvatarFallback className="bg-primary text-primary-foreground">
+                  {user.email?.charAt(0).toUpperCase() || 'U'}
+                </AvatarFallback>
+              </Avatar>
+              <span className="font-semibold truncate">{user.email?.split('@')[0] || 'Người dùng'}</span>
+            </Button>
+          </Link>
         ) : (
           <Link to="/auth">
             <Button variant="ghost" className="w-full justify-start gap-3 h-12 hover:bg-primary/10">
@@ -47,24 +49,25 @@ const LeftSidebar: React.FC = () => {
 
         {/* Menu Items */}
         {menuItems.map((item) => (
-          <Button
-            key={item.label}
-            variant="ghost"
-            className={`w-full justify-start gap-3 h-12 ${
-              item.highlight 
-                ? 'text-primary hover:bg-primary/10' 
-                : 'text-foreground hover:bg-muted'
-            }`}
-          >
-            <div className={`p-2 rounded-lg ${
-              item.highlight 
-                ? 'bg-primary/10' 
-                : 'bg-muted'
-            }`}>
-              <item.icon className="h-5 w-5" />
-            </div>
-            <span className="font-medium">{item.label}</span>
-          </Button>
+          <Link key={item.label} to={item.href}>
+            <Button
+              variant="ghost"
+              className={`w-full justify-start gap-3 h-12 ${
+                item.highlight 
+                  ? 'text-primary hover:bg-primary/10' 
+                  : 'text-foreground hover:bg-muted'
+              }`}
+            >
+              <div className={`p-2 rounded-lg ${
+                item.highlight 
+                  ? 'bg-primary/10' 
+                  : 'bg-muted'
+              }`}>
+                <item.icon className="h-5 w-5" />
+              </div>
+              <span className="font-medium">{item.label}</span>
+            </Button>
+          </Link>
         ))}
 
         {/* Sign Out Button */}
