@@ -1,258 +1,307 @@
 /**
  * FUN Profile API Gateway - Cloudflare Worker
  * 
- * This worker acts as a secure API gateway between the frontend and Supabase.
- * - Frontend sends requests with Bearer token (from Supabase Auth)
- * - Worker verifies token and proxies requests to Supabase with Service Role Key
+ * SECURITY ARCHITECTURE (Big Tech Style):
+ * - JWT verification using JWKS (jose library) - NO network call per request
+ * - userId extracted from JWT payload.sub (NEVER trust client)
+ * - Service Role Key for Supabase queries (server-side only)
+ * - Strict CORS with allowed origins whitelist
+ * - Input validation with allowlist/blocklist pattern
  */
 
+import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
+
+// ========== TYPES ==========
 interface Env {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  ALLOWED_ORIGIN?: string; // Optional: for production CORS restriction
+  ALLOWED_ORIGINS?: string;
 }
 
-interface SupabaseUser {
+interface ProfileData {
   id: string;
-  email?: string;
-  [key: string]: unknown;
+  display_name: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  wallet_address: string | null;
+  camly_balance: number;
+  created_at: string;
+  updated_at: string;
 }
 
-// CORS headers - adjust ALLOWED_ORIGIN in production
-const getCorsHeaders = (env: Env): HeadersInit => ({
-  'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Max-Age': '86400',
-});
+// ========== CONSTANTS ==========
+const ALLOWED_PROFILE_FIELDS = ['display_name', 'bio', 'avatar_url', 'website'];
+const BLOCKED_PROFILE_FIELDS = ['id', 'camly_balance', 'wallet_address', 'created_at', 'updated_at'];
 
-// JSON response helper
-const jsonResponse = (data: unknown, status: number, env: Env): Response => {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      ...getCorsHeaders(env),
-      'Content-Type': 'application/json',
-    },
-  });
-};
+// ========== JWKS SINGLETON (Cached in Worker memory) ==========
+let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
-// Error response helper
-const errorResponse = (message: string, status: number, env: Env): Response => {
-  return jsonResponse({ error: message }, status, env);
-};
+function getJWKS(supabaseUrl: string): ReturnType<typeof createRemoteJWKSet> {
+  if (!jwks) {
+    const jwksUrl = new URL('/auth/v1/.well-known/jwks.json', supabaseUrl);
+    jwks = createRemoteJWKSet(jwksUrl);
+  }
+  return jwks;
+}
 
-/**
- * Verify JWT token by calling Supabase Auth API
- * Returns user object if valid, null if invalid
- */
-async function verifyToken(token: string, env: Env): Promise<SupabaseUser | null> {
+// ========== JWT VERIFICATION (JWKS - No network call per request) ==========
+async function verifyJWT(token: string, env: Env): Promise<JWTPayload | null> {
   try {
-    const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-      headers: {
-        apikey: env.SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`,
-      },
+    const { payload } = await jwtVerify(token, getJWKS(env.SUPABASE_URL), {
+      issuer: `${env.SUPABASE_URL}/auth/v1`,
+      // Note: Supabase JWT doesn't have audience claim by default
+      // audience: 'authenticated',
     });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const user = await response.json() as SupabaseUser;
-    return user;
+    return payload;
   } catch (error) {
-    console.error('Token verification error:', error);
+    // Security: Don't log the token itself
+    console.error('JWT verification failed:', error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 }
 
-/**
- * Extract Bearer token from Authorization header
- */
+// ========== CORS HELPERS ==========
+function getCorsHeaders(request: Request, env: Env): HeadersInit {
+  const origin = request.headers.get('Origin') || '';
+  const allowedOrigins = (env.ALLOWED_ORIGINS || '*').split(',').map(o => o.trim());
+  
+  // Check if origin is allowed
+  const isAllowed = allowedOrigins.includes('*') || allowedOrigins.includes(origin);
+  
+  if (isAllowed) {
+    return {
+      'Access-Control-Allow-Origin': origin || '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Max-Age': '86400',
+    };
+  }
+  
+  // Origin not allowed - return empty headers (browser will block)
+  console.warn(`CORS blocked origin: ${origin}`);
+  return {
+    'Access-Control-Allow-Origin': '',
+    'Access-Control-Allow-Methods': '',
+    'Access-Control-Allow-Headers': '',
+  };
+}
+
+function jsonResponse(data: unknown, status: number, env: Env, request: Request): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...getCorsHeaders(request, env),
+      'Content-Type': 'application/json',
+    },
+  });
+}
+
+function errorResponse(message: string, status: number, env: Env, request: Request): Response {
+  return jsonResponse({ error: message, success: false }, status, env, request);
+}
+
+// ========== TOKEN EXTRACTION ==========
 function extractToken(request: Request): string | null {
   const authHeader = request.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return null;
   }
-  return authHeader.slice(7);
+  return authHeader.slice(7); // Remove 'Bearer ' prefix
 }
 
-/**
- * GET /api/profile/me - Get current user's profile
- */
-async function getMyProfile(userId: string, env: Env): Promise<Response> {
-  try {
-    const response = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`,
-      {
-        headers: {
-          apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Supabase error:', errorText);
-      return errorResponse('Failed to fetch profile', response.status, env);
-    }
-
-    const profiles = await response.json() as unknown[];
-    const profile = profiles[0] || null;
-
-    return jsonResponse({ profile }, 200, env);
-  } catch (error) {
-    console.error('Get profile error:', error);
-    return errorResponse('Internal server error', 500, env);
-  }
-}
-
-/**
- * PATCH /api/profile/me - Update current user's profile
- */
-async function updateMyProfile(userId: string, body: Record<string, unknown>, env: Env): Promise<Response> {
-  try {
-    // Validate and sanitize input - only allow specific fields
-    const allowedFields = ['display_name', 'bio', 'avatar_url'];
-    const sanitizedBody: Record<string, unknown> = {};
-
-    for (const field of allowedFields) {
-      if (field in body) {
-        // Basic validation
-        const value = body[field];
-        if (typeof value === 'string' && value.length <= 1000) {
-          sanitizedBody[field] = value.trim();
-        }
-      }
-    }
-
-    if (Object.keys(sanitizedBody).length === 0) {
-      return errorResponse('No valid fields to update', 400, env);
-    }
-
-    const response = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`,
-      {
-        method: 'PATCH',
-        headers: {
-          apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation',
-        },
-        body: JSON.stringify(sanitizedBody),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Supabase update error:', errorText);
-      return errorResponse('Failed to update profile', response.status, env);
-    }
-
-    const profiles = await response.json() as unknown[];
-    const profile = profiles[0] || null;
-
-    return jsonResponse({ profile }, 200, env);
-  } catch (error) {
-    console.error('Update profile error:', error);
-    return errorResponse('Internal server error', 500, env);
-  }
-}
-
-/**
- * POST /api/media/presign - Generate presigned upload URL (placeholder)
- */
-async function presignMediaUpload(_userId: string, env: Env): Promise<Response> {
-  // TODO: Implement when media upload feature is added
-  // This could integrate with Cloudflare R2 or Supabase Storage
-  return jsonResponse(
-    { 
-      error: 'Not implemented',
-      message: 'Media upload feature coming soon'
-    }, 
-    501, 
-    env
-  );
-}
-
-/**
- * Middleware to verify authentication
- */
+// ========== AUTH MIDDLEWARE ==========
 async function withAuth(
   request: Request,
   env: Env,
-  handler: (userId: string, env: Env) => Promise<Response>
+  handler: (userId: string, request: Request, env: Env) => Promise<Response>
 ): Promise<Response> {
   const token = extractToken(request);
-
   if (!token) {
-    return errorResponse('Missing authorization token', 401, env);
+    return errorResponse('Missing authorization token', 401, env, request);
   }
 
-  const user = await verifyToken(token, env);
-
-  if (!user) {
-    return errorResponse('Invalid or expired token', 401, env);
+  const payload = await verifyJWT(token, env);
+  if (!payload?.sub) {
+    return errorResponse('Invalid or expired token', 401, env, request);
   }
 
-  return handler(user.id, env);
+  // CRITICAL: userId comes from JWT payload.sub, NEVER from client
+  return handler(payload.sub, request, env);
 }
 
-/**
- * Main request handler
- */
+// ========== INPUT VALIDATION ==========
+function sanitizeProfileUpdate(body: unknown): Record<string, string | null> | null {
+  if (!body || typeof body !== 'object') {
+    return null;
+  }
+
+  const data = body as Record<string, unknown>;
+  const sanitized: Record<string, string | null> = {};
+
+  // Check for blocked fields first - reject entire request if found
+  for (const blocked of BLOCKED_PROFILE_FIELDS) {
+    if (blocked in data) {
+      console.warn(`Blocked attempt to update protected field: ${blocked}`);
+      return null;
+    }
+  }
+
+  // Only allow whitelisted fields
+  for (const field of ALLOWED_PROFILE_FIELDS) {
+    if (field in data) {
+      const value = data[field];
+      if (value === null) {
+        // Allow null values for clearing fields
+        sanitized[field] = null;
+      } else if (typeof value === 'string') {
+        // Validate string length
+        if (value.length > 1000) {
+          console.warn(`Field ${field} exceeds max length`);
+          return null;
+        }
+        sanitized[field] = value.trim();
+      }
+    }
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+}
+
+// ========== SUPABASE API HELPERS ==========
+async function getProfileFromSupabase(userId: string, env: Env): Promise<ProfileData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    console.error('Supabase GET error:', response.status);
+    return null;
+  }
+
+  const profiles = await response.json() as ProfileData[];
+  return profiles[0] || null;
+}
+
+async function updateProfileInSupabase(
+  userId: string, 
+  data: Record<string, string | null>, 
+  env: Env
+): Promise<ProfileData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`;
+  
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    console.error('Supabase PATCH error:', response.status);
+    return null;
+  }
+
+  const profiles = await response.json() as ProfileData[];
+  return profiles[0] || null;
+}
+
+// ========== API HANDLERS ==========
+async function handleGetProfile(userId: string, request: Request, env: Env): Promise<Response> {
+  const profile = await getProfileFromSupabase(userId, env);
+  
+  if (!profile) {
+    return errorResponse('Profile not found', 404, env, request);
+  }
+
+  return jsonResponse({ success: true, profile }, 200, env, request);
+}
+
+async function handleUpdateProfile(userId: string, request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  const sanitizedData = sanitizeProfileUpdate(body);
+  if (!sanitizedData) {
+    return errorResponse('Invalid or empty update data. Allowed fields: display_name, bio, avatar_url, website', 400, env, request);
+  }
+
+  const profile = await updateProfileInSupabase(userId, sanitizedData, env);
+  
+  if (!profile) {
+    return errorResponse('Failed to update profile', 500, env, request);
+  }
+
+  return jsonResponse({ success: true, profile }, 200, env, request);
+}
+
+async function handleMediaPresign(userId: string, request: Request, env: Env): Promise<Response> {
+  // TODO: Implement R2/Storage presigned URL generation
+  return jsonResponse({
+    success: false,
+    error: 'Media upload not yet implemented',
+    todo: 'Integrate with Cloudflare R2 or Supabase Storage'
+  }, 501, env, request);
+}
+
+async function handleHealthCheck(request: Request, env: Env): Response {
+  return jsonResponse({
+    success: true,
+    status: 'healthy',
+    version: '2.0.0',
+    features: ['jwks-verification', 'cors-whitelist', 'input-validation']
+  }, 200, env, request);
+}
+
+// ========== MAIN ROUTER ==========
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const corsHeaders = getCorsHeaders(env);
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
 
     // Handle CORS preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { 
+    if (method === 'OPTIONS') {
+      return new Response(null, {
         status: 204,
-        headers: corsHeaders 
+        headers: getCorsHeaders(request, env),
       });
     }
 
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    try {
-      // ============== API Routes ==============
-
-      // GET /api/profile/me
-      if (path === '/api/profile/me' && request.method === 'GET') {
-        return withAuth(request, env, (userId) => getMyProfile(userId, env));
-      }
-
-      // PATCH /api/profile/me
-      if (path === '/api/profile/me' && request.method === 'PATCH') {
-        return withAuth(request, env, async (userId) => {
-          const body = await request.json() as Record<string, unknown>;
-          return updateMyProfile(userId, body, env);
-        });
-      }
-
-      // POST /api/media/presign
-      if (path === '/api/media/presign' && request.method === 'POST') {
-        return withAuth(request, env, (userId) => presignMediaUpload(userId, env));
-      }
-
-      // Health check endpoint
-      if (path === '/api/health' && request.method === 'GET') {
-        return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() }, 200, env);
-      }
-
-      // ============== 404 Not Found ==============
-      return errorResponse('Not found', 404, env);
-
-    } catch (error) {
-      console.error('Unhandled error:', error);
-      return errorResponse('Internal server error', 500, env);
+    // ===== PUBLIC ROUTES =====
+    if (path === '/api/health' && method === 'GET') {
+      return handleHealthCheck(request, env);
     }
+
+    // ===== PROTECTED ROUTES =====
+    if (path === '/api/profile/me') {
+      if (method === 'GET') {
+        return withAuth(request, env, handleGetProfile);
+      }
+      if (method === 'PATCH') {
+        return withAuth(request, env, handleUpdateProfile);
+      }
+    }
+
+    if (path === '/api/media/presign' && method === 'POST') {
+      return withAuth(request, env, handleMediaPresign);
+    }
+
+    // ===== 404 =====
+    return errorResponse('Not Found', 404, env, request);
   },
 };
