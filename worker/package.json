@@ -1,13 +1,16 @@
 {
   "name": "funprofile-api",
   "version": "1.0.0",
-  "description": "FUN Profile API Gateway - Cloudflare Worker",
+  "description": "FUN Profile API Gateway - Cloudflare Worker with JWKS JWT Verification",
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "esbuild src/index.ts --bundle --outfile=dist/index.js --format=esm --platform=node",
     "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "jose": "^5.2.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
