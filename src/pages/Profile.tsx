@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { getMyProfile, updateMyProfile } from '@/lib/api';
 import { Navigate } from 'react-router-dom';
 import Header from '@/components/layout/Header';
 import LeftSidebar from '@/components/layout/LeftSidebar';
@@ -40,23 +40,20 @@ const Profile = () => {
   }, [user]);
 
   const fetchProfile = async () => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user?.id)
-      .maybeSingle();
+    const { data, error } = await getMyProfile();
 
     if (error) {
       console.error('Error fetching profile:', error);
+      toast.error('Không thể tải hồ sơ');
       return;
     }
 
-    if (data) {
-      setProfile(data);
+    if (data?.profile) {
+      setProfile(data.profile);
       setEditForm({
-        display_name: data.display_name || '',
-        bio: data.bio || '',
-        avatar_url: data.avatar_url || ''
+        display_name: data.profile.display_name || '',
+        bio: data.profile.bio || '',
+        avatar_url: data.profile.avatar_url || ''
       });
     }
   };
@@ -65,14 +62,11 @@ const Profile = () => {
     if (!user) return;
     setSaving(true);
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        display_name: editForm.display_name,
-        bio: editForm.bio,
-        avatar_url: editForm.avatar_url
-      })
-      .eq('id', user.id);
+    const { error } = await updateMyProfile({
+      display_name: editForm.display_name,
+      bio: editForm.bio,
+      avatar_url: editForm.avatar_url
+    });
 
     setSaving(false);
 

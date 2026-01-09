@@ -1,0 +1,24 @@
+# FUN Profile API Gateway - Cloudflare Worker Configuration
+# Docs: https://developers.cloudflare.com/workers/configuration/
+
+name = "funprofile-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# TypeScript compilation
+[build]
+command = "npm run build"
+
+# Environment variables (non-secret)
+[vars]
+SUPABASE_URL = "https://qoafaznrqkbhrhacffur.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvYWZhem5ycWtiaHJoYWNmZnVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2MjkyNTYsImV4cCI6MjA4MzIwNTI1Nn0.AhqzVfbYdR1K3Z_uqrCH0uR1_t1UIfcAJrtf3oiLdXI"
+# ALLOWED_ORIGIN = "https://funprofile.org"  # Uncomment for production
+
+# Secrets (set via: wrangler secret put SUPABASE_SERVICE_ROLE_KEY)
+# SUPABASE_SERVICE_ROLE_KEY = "***"
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
