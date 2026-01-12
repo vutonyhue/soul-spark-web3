@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Pencil, Save, X, Coins, Calendar, User } from 'lucide-react';
 import { toast } from 'sonner';
+import ImageUpload from '@/components/ui/image-upload';
 
 interface Profile {
   id: string;
@@ -126,13 +127,25 @@ const Profile = () => {
           <Card className="mb-6 overflow-hidden">
             <div className="h-32 gradient-chakra" />
             <CardContent className="relative pt-0">
-              <div className="flex flex-col sm:flex-row items-center sm:items-end gap-4 -mt-16">
-                <Avatar className="w-32 h-32 border-4 border-card shadow-lg">
-                  <AvatarImage src={isEditing ? editForm.avatar_url : profile?.avatar_url || ''} />
-                  <AvatarFallback className="text-2xl bg-primary text-primary-foreground">
-                    {getInitials(profile?.display_name)}
-                  </AvatarFallback>
-                </Avatar>
+          <div className="flex flex-col sm:flex-row items-center sm:items-end gap-4 -mt-16">
+                <div className="relative">
+                  <Avatar className="w-32 h-32 border-4 border-card shadow-lg">
+                    <AvatarImage src={isEditing ? editForm.avatar_url : profile?.avatar_url || ''} />
+                    <AvatarFallback className="text-2xl bg-primary text-primary-foreground">
+                      {getInitials(profile?.display_name)}
+                    </AvatarFallback>
+                  </Avatar>
+                  {isEditing && (
+                    <div className="absolute -bottom-1 -right-1">
+                      <ImageUpload
+                        purpose="avatar"
+                        currentImageUrl={editForm.avatar_url}
+                        onUploadComplete={(url) => setEditForm({ ...editForm, avatar_url: url })}
+                        variant="button"
+                      />
+                    </div>
+                  )}
+                </div>
                 
                 <div className="flex-1 text-center sm:text-left pb-4">
                   {isEditing ? (
@@ -184,20 +197,12 @@ const Profile = () => {
               </CardHeader>
               <CardContent>
                 {isEditing ? (
-                  <>
-                    <Textarea
-                      value={editForm.bio}
-                      onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })}
-                      placeholder="Viết vài dòng về bản thân..."
-                      rows={4}
-                      className="mb-3"
-                    />
-                    <Input
-                      value={editForm.avatar_url}
-                      onChange={(e) => setEditForm({ ...editForm, avatar_url: e.target.value })}
-                      placeholder="URL ảnh đại diện"
-                    />
-                  </>
+                  <Textarea
+                    value={editForm.bio}
+                    onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })}
+                    placeholder="Viết vài dòng về bản thân..."
+                    rows={4}
+                  />
                 ) : (
                   <p className="text-muted-foreground">
                     {profile?.bio || 'Chưa có thông tin giới thiệu'}
