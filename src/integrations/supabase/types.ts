@@ -101,9 +101,11 @@ export type Database = {
           id: string
           image_url: string | null
           likes_count: number | null
+          media_type: string | null
           shares_count: number | null
           updated_at: string
           user_id: string
+          video_url: string | null
         }
         Insert: {
           coin_reward?: number | null
@@ -113,9 +115,11 @@ export type Database = {
           id?: string
           image_url?: string | null
           likes_count?: number | null
+          media_type?: string | null
           shares_count?: number | null
           updated_at?: string
           user_id: string
+          video_url?: string | null
         }
         Update: {
           coin_reward?: number | null
@@ -125,9 +129,11 @@ export type Database = {
           id?: string
           image_url?: string | null
           likes_count?: number | null
+          media_type?: string | null
           shares_count?: number | null
           updated_at?: string
           user_id?: string
+          video_url?: string | null
         }
         Relationships: [
           {
