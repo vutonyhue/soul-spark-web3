@@ -59,6 +59,14 @@ const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'vide
 const VIDEO_PURPOSES = ['post', 'story'] as const;
 const CHUNK_MIN_SIZE = 5 * 1024 * 1024; // 5MB minimum chunk size for multipart
 
+// Helper to build public URL without double slashes
+function buildPublicUrl(baseUrl: string, key: string): string {
+  // Remove trailing slash from base, ensure key doesn't start with slash
+  const base = baseUrl.replace(/\/+$/, '');
+  const path = key.replace(/^\/+/, '');
+  return `${base}/${path}`;
+}
+
 interface PresignRequest {
   filename: string;
   contentType: string;
@@ -960,7 +968,7 @@ async function handleVideoPresign(userId: string, request: Request, env: Env): P
         success: true,
         key: key,
         isMultipart: false,
-        publicUrl: `${env.R2_PUBLIC_URL}/${key}`,
+        publicUrl: buildPublicUrl(env.R2_PUBLIC_URL, key),
       }, 200, env, request);
     }
   } catch (error) {
@@ -1049,7 +1057,7 @@ async function handleVideoComplete(userId: string, request: Request, env: Env): 
 
     await multipartUpload.complete(sortedParts);
 
-    const publicUrl = `${env.R2_PUBLIC_URL}/${key}`;
+    const publicUrl = buildPublicUrl(env.R2_PUBLIC_URL, key);
 
     return jsonResponse({
       success: true,
@@ -1085,7 +1093,7 @@ async function handleVideoDirectUpload(userId: string, request: Request, env: En
       },
     });
 
-    const publicUrl = `${env.R2_PUBLIC_URL}/${key}`;
+    const publicUrl = buildPublicUrl(env.R2_PUBLIC_URL, key);
 
     return jsonResponse({
       success: true,

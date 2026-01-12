@@ -76,6 +76,7 @@ const PostCard: React.FC<PostCardProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLiking, setIsLiking] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [videoError, setVideoError] = useState(false);
 
   const isOwner = currentUserId === userId;
 
@@ -261,16 +262,40 @@ const PostCard: React.FC<PostCardProps> = ({
           {/* Media Section - Video or Image */}
           {mediaType === 'video' && videoUrl && (
             <div className="relative -mx-6 mb-3">
-              <video
-                src={videoUrl}
-                controls
-                playsInline
-                preload="metadata"
-                className="w-full max-h-[500px] bg-black object-contain"
-                poster={image || undefined}
-              >
-                Trình duyệt của bạn không hỗ trợ video.
-              </video>
+              {videoError ? (
+                <div className="w-full h-[300px] bg-muted flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                  <p className="text-sm font-medium">Không thể phát video</p>
+                  <p className="text-xs text-center px-4">
+                    Video có thể sử dụng codec không được hỗ trợ (HEVC/H.265).<br/>
+                    Thử xuất video ở định dạng MP4 H.264/AAC.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(videoUrl, '_blank')}
+                  >
+                    Mở video trong tab mới
+                  </Button>
+                </div>
+              ) : (
+                <video
+                  src={videoUrl}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="w-full max-h-[500px] bg-black object-contain"
+                  poster={image || undefined}
+                  onError={(e) => {
+                    console.error('Video load error:', e, videoUrl);
+                    setVideoError(true);
+                  }}
+                  onLoadedMetadata={() => {
+                    setVideoError(false);
+                  }}
+                >
+                  Trình duyệt của bạn không hỗ trợ video.
+                </video>
+              )}
             </div>
           )}
 
