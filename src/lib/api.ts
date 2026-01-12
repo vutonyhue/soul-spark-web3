@@ -189,6 +189,8 @@ export interface Post {
   user_id: string;
   content: string;
   image_url: string | null;
+  video_url: string | null;
+  media_type: string | null;
   coin_reward: number;
   likes_count: number;
   comments_count: number;
@@ -212,11 +214,15 @@ interface PostsResponse {
 interface CreatePostData {
   content: string;
   image_url?: string;
+  video_url?: string;
+  media_type?: 'image' | 'video' | 'none';
 }
 
 interface UpdatePostData {
   content?: string;
   image_url?: string;
+  video_url?: string;
+  media_type?: 'image' | 'video' | 'none';
 }
 
 /**

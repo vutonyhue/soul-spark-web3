@@ -114,6 +114,8 @@ const Feed: React.FC = () => {
             }}
             content={post.content}
             image={post.image_url || undefined}
+            videoUrl={post.video_url || undefined}
+            mediaType={(post.media_type as 'image' | 'video' | 'none') || undefined}
             timestamp={formatTimestamp(post.created_at)}
             likes={post.likes_count}
             comments={post.comments_count}

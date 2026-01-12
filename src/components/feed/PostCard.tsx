@@ -37,6 +37,8 @@ interface PostCardProps {
   };
   content: string;
   image?: string;
+  videoUrl?: string;
+  mediaType?: 'image' | 'video' | 'none';
   timestamp: string;
   likes: number;
   comments: number;
@@ -53,6 +55,8 @@ const PostCard: React.FC<PostCardProps> = ({
   author,
   content,
   image,
+  videoUrl,
+  mediaType,
   timestamp,
   likes,
   comments,
@@ -254,7 +258,34 @@ const PostCard: React.FC<PostCardProps> = ({
             <p className="mb-3 whitespace-pre-wrap">{content}</p>
           )}
           
-          {image && (
+          {/* Media Section - Video or Image */}
+          {mediaType === 'video' && videoUrl && (
+            <div className="relative -mx-6 mb-3">
+              <video
+                src={videoUrl}
+                controls
+                playsInline
+                preload="metadata"
+                className="w-full max-h-[500px] bg-black object-contain"
+                poster={image || undefined}
+              >
+                Trình duyệt của bạn không hỗ trợ video.
+              </video>
+            </div>
+          )}
+
+          {mediaType === 'image' && image && (
+            <div className="relative -mx-6 mb-3">
+              <img 
+                src={image} 
+                alt="Post content" 
+                className="w-full object-cover max-h-[500px]"
+              />
+            </div>
+          )}
+
+          {/* Fallback for posts without mediaType (backward compatibility) */}
+          {(!mediaType || mediaType === 'none') && image && (
             <div className="relative -mx-6 mb-3">
               <img 
                 src={image} 
