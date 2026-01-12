@@ -9,10 +9,17 @@ compatibility_date = "2024-01-01"
 [build]
 command = "npm run build"
 
+# R2 Storage Binding for video/media uploads
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "funprofile-media"
+
 # Environment variables (non-secret)
 [vars]
 SUPABASE_URL = "https://qoafaznrqkbhrhacffur.supabase.co"
 SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvYWZhem5ycWtiaHJoYWNmZnVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2MjkyNTYsImV4cCI6MjA4MzIwNTI1Nn0.AhqzVfbYdR1K3Z_uqrCH0uR1_t1UIfcAJrtf3oiLdXI"
+# R2 public URL - update this after enabling R2 public access
+R2_PUBLIC_URL = "https://pub-funprofile-media.r2.dev"
 
 # CORS: Allowed origins (comma-separated)
 # Development + Lovable Preview

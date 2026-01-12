@@ -395,3 +395,256 @@ export async function deleteComment(
     method: 'DELETE',
   });
 }
+
+// ========== VIDEO UPLOAD API (R2) ==========
+
+interface VideoPresignResponse {
+  uploadId?: string;
+  key: string;
+  isMultipart: boolean;
+  chunkSize?: number;
+  publicUrl?: string;
+}
+
+interface VideoPartResponse {
+  etag: string;
+  partNumber: number;
+}
+
+interface VideoCompleteResponse {
+  publicUrl: string;
+  key: string;
+}
+
+/**
+ * Request presigned URL for video upload
+ */
+export async function getVideoPresignUrl(
+  filename: string,
+  contentType: string,
+  purpose: 'post' | 'story',
+  fileSize: number
+): Promise<ApiResponse<VideoPresignResponse>> {
+  return fetchWithAuth<VideoPresignResponse>('/api/video/presign', {
+    method: 'POST',
+    body: JSON.stringify({ filename, contentType, purpose, fileSize }),
+  });
+}
+
+/**
+ * Upload video part (chunk) for multipart upload
+ */
+export async function uploadVideoPart(
+  uploadId: string,
+  key: string,
+  partNumber: number,
+  chunk: ArrayBuffer
+): Promise<ApiResponse<VideoPartResponse>> {
+  try {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError || !session?.access_token) {
+      return { data: null, error: 'Not authenticated' };
+    }
+
+    const url = `${API_BASE_URL}/api/video/part?uploadId=${encodeURIComponent(uploadId)}&key=${encodeURIComponent(key)}&partNumber=${partNumber}`;
+    
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: chunk,
+    });
+
+    const json = await response.json();
+
+    if (!response.ok) {
+      return { 
+        data: null, 
+        error: json.error || `Request failed with status ${response.status}` 
+      };
+    }
+
+    return { data: json as VideoPartResponse, error: null };
+  } catch (error) {
+    console.error('Video part upload failed:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error.message : 'Network error' 
+    };
+  }
+}
+
+/**
+ * Complete multipart video upload
+ */
+export async function completeVideoUpload(
+  uploadId: string,
+  key: string,
+  parts: Array<{ partNumber: number; etag: string }>
+): Promise<ApiResponse<VideoCompleteResponse>> {
+  return fetchWithAuth<VideoCompleteResponse>('/api/video/complete', {
+    method: 'POST',
+    body: JSON.stringify({ uploadId, key, parts }),
+  });
+}
+
+/**
+ * Direct upload for small videos (under 5MB)
+ */
+export async function uploadVideoDirectly(
+  key: string,
+  contentType: string,
+  videoData: ArrayBuffer
+): Promise<ApiResponse<VideoCompleteResponse>> {
+  try {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError || !session?.access_token) {
+      return { data: null, error: 'Not authenticated' };
+    }
+
+    const url = `${API_BASE_URL}/api/video/direct?key=${encodeURIComponent(key)}&contentType=${encodeURIComponent(contentType)}`;
+    
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: videoData,
+    });
+
+    const json = await response.json();
+
+    if (!response.ok) {
+      return { 
+        data: null, 
+        error: json.error || `Request failed with status ${response.status}` 
+      };
+    }
+
+    return { data: json as VideoCompleteResponse, error: null };
+  } catch (error) {
+    console.error('Video direct upload failed:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error.message : 'Network error' 
+    };
+  }
+}
+
+/**
+ * Abort multipart video upload
+ */
+export async function abortVideoUpload(
+  uploadId: string,
+  key: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  return fetchWithAuth<{ success: boolean }>('/api/video/abort', {
+    method: 'POST',
+    body: JSON.stringify({ uploadId, key }),
+  });
+}
+
+/**
+ * Complete video upload handler
+ * Handles both small files (direct upload) and large files (multipart)
+ */
+export async function uploadVideo(
+  file: File,
+  purpose: 'post' | 'story',
+  onProgress?: (progress: number) => void
+): Promise<ApiResponse<{ publicUrl: string }>> {
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+
+  // Step 1: Get presign info
+  const { data: presignData, error: presignError } = await getVideoPresignUrl(
+    file.name,
+    file.type,
+    purpose,
+    file.size
+  );
+
+  if (presignError || !presignData) {
+    return { data: null, error: presignError || 'Failed to initiate upload' };
+  }
+
+  try {
+    // Step 2: Handle based on multipart or direct
+    if (!presignData.isMultipart) {
+      // Direct upload for small files
+      onProgress?.(10);
+      const arrayBuffer = await file.arrayBuffer();
+      onProgress?.(50);
+      
+      const { data, error } = await uploadVideoDirectly(
+        presignData.key,
+        file.type,
+        arrayBuffer
+      );
+
+      if (error || !data) {
+        return { data: null, error: error || 'Direct upload failed' };
+      }
+
+      onProgress?.(100);
+      return { data: { publicUrl: data.publicUrl }, error: null };
+    }
+
+    // Multipart upload for large files
+    const { uploadId, key, chunkSize = CHUNK_SIZE } = presignData;
+    
+    if (!uploadId) {
+      return { data: null, error: 'Missing uploadId for multipart upload' };
+    }
+
+    const totalParts = Math.ceil(file.size / chunkSize);
+    const parts: Array<{ partNumber: number; etag: string }> = [];
+
+    for (let i = 0; i < totalParts; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, file.size);
+      const chunk = await file.slice(start, end).arrayBuffer();
+      const partNumber = i + 1;
+
+      const { data: partData, error: partError } = await uploadVideoPart(
+        uploadId,
+        key,
+        partNumber,
+        chunk
+      );
+
+      if (partError || !partData) {
+        // Abort on failure
+        await abortVideoUpload(uploadId, key);
+        return { data: null, error: partError || `Failed to upload part ${partNumber}` };
+      }
+
+      parts.push({ partNumber: partData.partNumber, etag: partData.etag });
+      onProgress?.(Math.round(((i + 1) / totalParts) * 90));
+    }
+
+    // Step 3: Complete multipart upload
+    const { data: completeData, error: completeError } = await completeVideoUpload(
+      uploadId,
+      key,
+      parts
+    );
+
+    if (completeError || !completeData) {
+      return { data: null, error: completeError || 'Failed to complete upload' };
+    }
+
+    onProgress?.(100);
+    return { data: { publicUrl: completeData.publicUrl }, error: null };
+  } catch (error) {
+    console.error('Video upload failed:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error.message : 'Upload failed' 
+    };
+  }
+}
