@@ -34,6 +34,12 @@ interface ProfileData {
 const ALLOWED_PROFILE_FIELDS = ['display_name', 'bio', 'avatar_url', 'website'];
 const BLOCKED_PROFILE_FIELDS = ['id', 'camly_balance', 'wallet_address', 'created_at', 'updated_at'];
 
+// Posts constants
+const ALLOWED_POST_FIELDS = ['content', 'image_url'];
+const MAX_POST_CONTENT_LENGTH = 5000;
+const DEFAULT_POSTS_LIMIT = 20;
+const MAX_POSTS_LIMIT = 100;
+
 // ========== JWKS SINGLETON (Cached in Worker memory) ==========
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
@@ -216,6 +222,234 @@ async function updateProfileInSupabase(
   return profiles[0] || null;
 }
 
+// ========== POSTS TYPES ==========
+interface PostData {
+  id: string;
+  user_id: string;
+  content: string;
+  image_url: string | null;
+  coin_reward: number;
+  likes_count: number;
+  comments_count: number;
+  shares_count: number;
+  created_at: string;
+  updated_at: string;
+  author?: {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  };
+}
+
+interface CreatePostInput {
+  content: string;
+  image_url?: string;
+}
+
+// ========== POSTS VALIDATION ==========
+function sanitizePostCreate(body: unknown): CreatePostInput | null {
+  if (!body || typeof body !== 'object') {
+    return null;
+  }
+
+  const data = body as Record<string, unknown>;
+  
+  // Content is required
+  if (typeof data.content !== 'string' || data.content.trim().length === 0) {
+    return null;
+  }
+
+  const content = data.content.trim();
+  if (content.length > MAX_POST_CONTENT_LENGTH) {
+    return null;
+  }
+
+  const result: CreatePostInput = { content };
+
+  // Optional image_url
+  if (data.image_url !== undefined) {
+    if (data.image_url !== null && typeof data.image_url !== 'string') {
+      return null;
+    }
+    if (typeof data.image_url === 'string') {
+      result.image_url = data.image_url.trim();
+    }
+  }
+
+  return result;
+}
+
+function sanitizePostUpdate(body: unknown): Partial<CreatePostInput> | null {
+  if (!body || typeof body !== 'object') {
+    return null;
+  }
+
+  const data = body as Record<string, unknown>;
+  const sanitized: Partial<CreatePostInput> = {};
+
+  // Check for allowed fields only
+  for (const key of Object.keys(data)) {
+    if (!ALLOWED_POST_FIELDS.includes(key)) {
+      console.warn(`Blocked attempt to update protected field: ${key}`);
+      return null;
+    }
+  }
+
+  if (data.content !== undefined) {
+    if (typeof data.content !== 'string' || data.content.trim().length === 0) {
+      return null;
+    }
+    if (data.content.length > MAX_POST_CONTENT_LENGTH) {
+      return null;
+    }
+    sanitized.content = data.content.trim();
+  }
+
+  if (data.image_url !== undefined) {
+    if (data.image_url !== null && typeof data.image_url !== 'string') {
+      return null;
+    }
+    sanitized.image_url = typeof data.image_url === 'string' ? data.image_url.trim() : undefined;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+}
+
+// ========== POSTS SUPABASE HELPERS ==========
+async function getPostsFromSupabase(
+  env: Env,
+  limit: number = DEFAULT_POSTS_LIMIT,
+  offset: number = 0
+): Promise<{ posts: PostData[]; total: number } | null> {
+  // Get posts with author info
+  const url = `${env.SUPABASE_URL}/rest/v1/posts?select=*,author:profiles!user_id(id,display_name,avatar_url)&order=created_at.desc&limit=${limit}&offset=${offset}`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'count=exact',
+    },
+  });
+
+  if (!response.ok) {
+    console.error('Supabase GET posts error:', response.status);
+    return null;
+  }
+
+  const posts = await response.json() as PostData[];
+  const total = parseInt(response.headers.get('content-range')?.split('/')[1] || '0', 10);
+  
+  return { posts, total };
+}
+
+async function getPostById(postId: string, env: Env): Promise<PostData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/posts?id=eq.${postId}&select=*,author:profiles!user_id(id,display_name,avatar_url)`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const posts = await response.json() as PostData[];
+  return posts[0] || null;
+}
+
+async function createPostInSupabase(
+  userId: string,
+  data: CreatePostInput,
+  env: Env
+): Promise<PostData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/posts`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      content: data.content,
+      image_url: data.image_url || null,
+    }),
+  });
+
+  if (!response.ok) {
+    console.error('Supabase POST error:', response.status);
+    return null;
+  }
+
+  const posts = await response.json() as PostData[];
+  const post = posts[0];
+  
+  // Fetch author info
+  if (post) {
+    const author = await getProfileFromSupabase(userId, env);
+    if (author) {
+      post.author = {
+        id: author.id,
+        display_name: author.display_name,
+        avatar_url: author.avatar_url,
+      };
+    }
+  }
+  
+  return post || null;
+}
+
+async function updatePostInSupabase(
+  postId: string,
+  data: Partial<CreatePostInput>,
+  env: Env
+): Promise<PostData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/posts?id=eq.${postId}&select=*,author:profiles!user_id(id,display_name,avatar_url)`;
+  
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    console.error('Supabase PATCH post error:', response.status);
+    return null;
+  }
+
+  const posts = await response.json() as PostData[];
+  return posts[0] || null;
+}
+
+async function deletePostFromSupabase(postId: string, env: Env): Promise<boolean> {
+  const url = `${env.SUPABASE_URL}/rest/v1/posts?id=eq.${postId}`;
+  
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  return response.ok;
+}
+
 // ========== API HANDLERS ==========
 async function handleGetProfile(userId: string, request: Request, env: Env): Promise<Response> {
   const profile = await getProfileFromSupabase(userId, env);
@@ -262,9 +496,119 @@ async function handleHealthCheck(request: Request, env: Env): Response {
   return jsonResponse({
     success: true,
     status: 'healthy',
-    version: '2.0.0',
-    features: ['jwks-verification', 'cors-whitelist', 'input-validation']
+    version: '2.1.0',
+    features: ['jwks-verification', 'cors-whitelist', 'input-validation', 'posts-api']
   }, 200, env, request);
+}
+
+// ========== POSTS API HANDLERS ==========
+async function handleGetPosts(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const limit = Math.min(
+    parseInt(url.searchParams.get('limit') || String(DEFAULT_POSTS_LIMIT), 10),
+    MAX_POSTS_LIMIT
+  );
+  const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+
+  const result = await getPostsFromSupabase(env, limit, offset);
+  
+  if (!result) {
+    return errorResponse('Failed to fetch posts', 500, env, request);
+  }
+
+  return jsonResponse({
+    success: true,
+    posts: result.posts,
+    total: result.total,
+    limit,
+    offset,
+  }, 200, env, request);
+}
+
+async function handleCreatePost(userId: string, request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  const sanitizedData = sanitizePostCreate(body);
+  if (!sanitizedData) {
+    return errorResponse(
+      `Invalid post data. Content is required and must be under ${MAX_POST_CONTENT_LENGTH} characters.`,
+      400,
+      env,
+      request
+    );
+  }
+
+  const post = await createPostInSupabase(userId, sanitizedData, env);
+  
+  if (!post) {
+    return errorResponse('Failed to create post', 500, env, request);
+  }
+
+  return jsonResponse({ success: true, post }, 201, env, request);
+}
+
+async function handleUpdatePost(userId: string, postId: string, request: Request, env: Env): Promise<Response> {
+  // First check if post exists and belongs to user
+  const existingPost = await getPostById(postId, env);
+  
+  if (!existingPost) {
+    return errorResponse('Post not found', 404, env, request);
+  }
+
+  if (existingPost.user_id !== userId) {
+    return errorResponse('Access denied', 403, env, request);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  const sanitizedData = sanitizePostUpdate(body);
+  if (!sanitizedData) {
+    return errorResponse(
+      `Invalid update data. Allowed fields: ${ALLOWED_POST_FIELDS.join(', ')}`,
+      400,
+      env,
+      request
+    );
+  }
+
+  const post = await updatePostInSupabase(postId, sanitizedData, env);
+  
+  if (!post) {
+    return errorResponse('Failed to update post', 500, env, request);
+  }
+
+  return jsonResponse({ success: true, post }, 200, env, request);
+}
+
+async function handleDeletePost(userId: string, postId: string, request: Request, env: Env): Promise<Response> {
+  // First check if post exists and belongs to user
+  const existingPost = await getPostById(postId, env);
+  
+  if (!existingPost) {
+    return errorResponse('Post not found', 404, env, request);
+  }
+
+  if (existingPost.user_id !== userId) {
+    return errorResponse('Access denied', 403, env, request);
+  }
+
+  const success = await deletePostFromSupabase(postId, env);
+  
+  if (!success) {
+    return errorResponse('Failed to delete post', 500, env, request);
+  }
+
+  return jsonResponse({ success: true }, 200, env, request);
 }
 
 // ========== MAIN ROUTER ==========
@@ -299,6 +643,35 @@ export default {
 
     if (path === '/api/media/presign' && method === 'POST') {
       return withAuth(request, env, handleMediaPresign);
+    }
+
+    // ===== POSTS ROUTES =====
+    // GET /api/posts - Public: list posts with pagination
+    if (path === '/api/posts' && method === 'GET') {
+      return handleGetPosts(request, env);
+    }
+
+    // POST /api/posts - Protected: create new post
+    if (path === '/api/posts' && method === 'POST') {
+      return withAuth(request, env, handleCreatePost);
+    }
+
+    // PATCH/DELETE /api/posts/:id - Protected: update/delete post
+    const postMatch = path.match(/^\/api\/posts\/([a-f0-9-]+)$/);
+    if (postMatch) {
+      const postId = postMatch[1];
+      
+      if (method === 'PATCH') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleUpdatePost(userId, postId, req, e)
+        );
+      }
+      
+      if (method === 'DELETE') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleDeletePost(userId, postId, req, e)
+        );
+      }
     }
 
     // ===== 404 =====

@@ -126,3 +126,105 @@ export async function checkApiHealth(): Promise<boolean> {
     return false;
   }
 }
+
+// ========== POSTS API ==========
+
+export interface Post {
+  id: string;
+  user_id: string;
+  content: string;
+  image_url: string | null;
+  coin_reward: number;
+  likes_count: number;
+  comments_count: number;
+  shares_count: number;
+  created_at: string;
+  updated_at: string;
+  author?: {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  };
+}
+
+interface PostsResponse {
+  posts: Post[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+interface CreatePostData {
+  content: string;
+  image_url?: string;
+}
+
+interface UpdatePostData {
+  content?: string;
+  image_url?: string;
+}
+
+/**
+ * Fetch public posts (no auth required)
+ */
+export async function getPosts(
+  limit: number = 20,
+  offset: number = 0
+): Promise<ApiResponse<PostsResponse>> {
+  try {
+    const url = `${API_BASE_URL}/api/posts?limit=${limit}&offset=${offset}`;
+    const response = await fetch(url);
+    const json = await response.json();
+
+    if (!response.ok) {
+      return { 
+        data: null, 
+        error: json.error || `Request failed with status ${response.status}` 
+      };
+    }
+
+    return { data: json as PostsResponse, error: null };
+  } catch (error) {
+    console.error('API request failed:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error.message : 'Network error' 
+    };
+  }
+}
+
+/**
+ * Create a new post (requires auth)
+ */
+export async function createPost(
+  data: CreatePostData
+): Promise<ApiResponse<{ post: Post }>> {
+  return fetchWithAuth<{ post: Post }>('/api/posts', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Update a post (requires auth, owner only)
+ */
+export async function updatePost(
+  postId: string,
+  data: UpdatePostData
+): Promise<ApiResponse<{ post: Post }>> {
+  return fetchWithAuth<{ post: Post }>(`/api/posts/${postId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Delete a post (requires auth, owner only)
+ */
+export async function deletePost(
+  postId: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  return fetchWithAuth<{ success: boolean }>(`/api/posts/${postId}`, {
+    method: 'DELETE',
+  });
+}
