@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      posts: {
+        Row: {
+          coin_reward: number | null
+          comments_count: number | null
+          content: string
+          created_at: string
+          id: string
+          image_url: string | null
+          likes_count: number | null
+          shares_count: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          coin_reward?: number | null
+          comments_count?: number | null
+          content: string
+          created_at?: string
+          id?: string
+          image_url?: string | null
+          likes_count?: number | null
+          shares_count?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          coin_reward?: number | null
+          comments_count?: number | null
+          content?: string
+          created_at?: string
+          id?: string
+          image_url?: string | null
+          likes_count?: number | null
+          shares_count?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
