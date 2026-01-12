@@ -16,7 +16,7 @@ SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 # CORS: Allowed origins (comma-separated)
 # Development + Lovable Preview
-ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:8080,http://localhost:3000,https://1373df92-b445-4f58-a314-38032da2fd6f.lovableproject.com"
+ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:8080,http://localhost:3000,https://soul-spark-web3.lovable.app,https://1373df92-b445-4f58-a314-38032da2fd6f.lovableproject.com,https://id-preview--1373df92-b445-4f58-a314-38032da2fd6f.lovable.app"
 
 # Production (uncomment and update when deploying):
 # ALLOWED_ORIGINS = "https://funprofile.org,https://www.funprofile.org"
