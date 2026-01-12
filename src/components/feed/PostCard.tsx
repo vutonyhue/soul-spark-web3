@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Heart, MessageCircle, Share2, Bookmark, MoreHorizontal, Coins, Pencil, Trash2, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,8 +21,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { updatePost, deletePost, Post } from '@/lib/api';
+import { updatePost, deletePost, likePost, unlikePost, getLikeStatus, Post } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import CommentSection from './CommentSection';
 
 interface PostCardProps {
   postId: string;
@@ -59,19 +61,58 @@ const PostCard: React.FC<PostCardProps> = ({
   onUpdate,
   onDelete,
 }) => {
+  const { user } = useAuth();
   const [liked, setLiked] = useState(false);
   const [saved, setSaved] = useState(false);
   const [likeCount, setLikeCount] = useState(likes);
+  const [commentsCount, setCommentsCount] = useState(comments);
+  const [showComments, setShowComments] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(content);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLiking, setIsLiking] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const isOwner = currentUserId === userId;
 
-  const handleLike = () => {
-    setLiked(!liked);
-    setLikeCount(liked ? likeCount - 1 : likeCount + 1);
+  // Fetch like status on mount if user is logged in
+  useEffect(() => {
+    if (user) {
+      getLikeStatus(postId).then(({ data }) => {
+        if (data) {
+          setLiked(data.liked);
+        }
+      });
+    }
+  }, [postId, user]);
+
+  const handleLike = async () => {
+    if (!user) {
+      toast.error('Vui lòng đăng nhập để thích bài viết');
+      return;
+    }
+
+    if (isLiking) return;
+
+    setIsLiking(true);
+    
+    // Optimistic update
+    const wasLiked = liked;
+    setLiked(!wasLiked);
+    setLikeCount(wasLiked ? likeCount - 1 : likeCount + 1);
+
+    const { error } = wasLiked 
+      ? await unlikePost(postId)
+      : await likePost(postId);
+    
+    if (error) {
+      // Revert on error
+      setLiked(wasLiked);
+      setLikeCount(wasLiked ? likeCount : likeCount - 1);
+      toast.error('Không thể thực hiện: ' + error);
+    }
+    
+    setIsLiking(false);
   };
 
   const handleEdit = () => {
@@ -115,6 +156,10 @@ const PostCard: React.FC<PostCardProps> = ({
     }
     setIsSubmitting(false);
     setShowDeleteDialog(false);
+  };
+
+  const toggleComments = () => {
+    setShowComments(!showComments);
   };
 
   return (
@@ -228,7 +273,12 @@ const PostCard: React.FC<PostCardProps> = ({
               <span>{likeCount.toLocaleString()}</span>
             </div>
             <div className="flex gap-4">
-              <span>{comments} bình luận</span>
+              <button 
+                className="hover:underline cursor-pointer"
+                onClick={toggleComments}
+              >
+                {commentsCount} bình luận
+              </button>
               <span>{shares} chia sẻ</span>
             </div>
           </div>
@@ -239,11 +289,16 @@ const PostCard: React.FC<PostCardProps> = ({
               variant="ghost"
               className={`flex-1 gap-2 ${liked ? 'text-primary' : 'text-muted-foreground'}`}
               onClick={handleLike}
+              disabled={isLiking}
             >
               <Heart className={`h-5 w-5 ${liked ? 'fill-current' : ''}`} />
               Thích
             </Button>
-            <Button variant="ghost" className="flex-1 gap-2 text-muted-foreground">
+            <Button 
+              variant="ghost" 
+              className={`flex-1 gap-2 ${showComments ? 'text-primary' : 'text-muted-foreground'}`}
+              onClick={toggleComments}
+            >
               <MessageCircle className="h-5 w-5" />
               Bình luận
             </Button>
@@ -260,6 +315,15 @@ const PostCard: React.FC<PostCardProps> = ({
               <Bookmark className={`h-5 w-5 ${saved ? 'fill-current' : ''}`} />
             </Button>
           </div>
+
+          {/* Comments Section */}
+          {showComments && (
+            <CommentSection 
+              postId={postId}
+              commentsCount={commentsCount}
+              onCommentsCountChange={setCommentsCount}
+            />
+          )}
         </CardContent>
       </Card>
 

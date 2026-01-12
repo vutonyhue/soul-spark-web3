@@ -283,3 +283,115 @@ export async function deletePost(
     method: 'DELETE',
   });
 }
+
+// ========== LIKES API ==========
+
+/**
+ * Like a post (requires auth)
+ */
+export async function likePost(
+  postId: string
+): Promise<ApiResponse<{ liked: boolean }>> {
+  return fetchWithAuth<{ liked: boolean }>(`/api/posts/${postId}/like`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Unlike a post (requires auth)
+ */
+export async function unlikePost(
+  postId: string
+): Promise<ApiResponse<{ liked: boolean }>> {
+  return fetchWithAuth<{ liked: boolean }>(`/api/posts/${postId}/like`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Get like status for a post (requires auth)
+ */
+export async function getLikeStatus(
+  postId: string
+): Promise<ApiResponse<{ liked: boolean }>> {
+  return fetchWithAuth<{ liked: boolean }>(`/api/posts/${postId}/like/status`, {
+    method: 'GET',
+  });
+}
+
+// ========== COMMENTS API ==========
+
+export interface Comment {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  author?: {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  };
+}
+
+interface CommentsResponse {
+  comments: Comment[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Get comments for a post (public)
+ */
+export async function getComments(
+  postId: string,
+  limit: number = 20,
+  offset: number = 0
+): Promise<ApiResponse<CommentsResponse>> {
+  try {
+    const url = `${API_BASE_URL}/api/posts/${postId}/comments?limit=${limit}&offset=${offset}`;
+    const response = await fetch(url);
+    const json = await response.json();
+
+    if (!response.ok) {
+      return { 
+        data: null, 
+        error: json.error || `Request failed with status ${response.status}` 
+      };
+    }
+
+    return { data: json as CommentsResponse, error: null };
+  } catch (error) {
+    console.error('API request failed:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error.message : 'Network error' 
+    };
+  }
+}
+
+/**
+ * Create a comment (requires auth)
+ */
+export async function createComment(
+  postId: string,
+  content: string
+): Promise<ApiResponse<{ comment: Comment }>> {
+  return fetchWithAuth<{ comment: Comment }>(`/api/posts/${postId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+}
+
+/**
+ * Delete a comment (requires auth, owner only)
+ */
+export async function deleteComment(
+  commentId: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  return fetchWithAuth<{ success: boolean }>(`/api/comments/${commentId}`, {
+    method: 'DELETE',
+  });
+}
