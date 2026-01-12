@@ -38,7 +38,7 @@ const ALLOWED_PROFILE_FIELDS = ['display_name', 'bio', 'avatar_url', 'website'];
 const BLOCKED_PROFILE_FIELDS = ['id', 'camly_balance', 'wallet_address', 'created_at', 'updated_at'];
 
 // Posts constants
-const ALLOWED_POST_FIELDS = ['content', 'image_url'];
+const ALLOWED_POST_FIELDS = ['content', 'image_url', 'video_url', 'media_type'];
 const MAX_POST_CONTENT_LENGTH = 5000;
 const DEFAULT_POSTS_LIMIT = 20;
 const MAX_POSTS_LIMIT = 100;
@@ -295,6 +295,8 @@ interface PostData {
   user_id: string;
   content: string;
   image_url: string | null;
+  video_url: string | null;
+  media_type: string | null;
   coin_reward: number;
   likes_count: number;
   comments_count: number;
@@ -311,6 +313,8 @@ interface PostData {
 interface CreatePostInput {
   content: string;
   image_url?: string;
+  video_url?: string;
+  media_type?: 'image' | 'video' | 'none';
 }
 
 // ========== POSTS VALIDATION ==========
@@ -341,6 +345,24 @@ function sanitizePostCreate(body: unknown): CreatePostInput | null {
     if (typeof data.image_url === 'string') {
       result.image_url = data.image_url.trim();
     }
+  }
+
+  // Optional video_url
+  if (data.video_url !== undefined) {
+    if (data.video_url !== null && typeof data.video_url !== 'string') {
+      return null;
+    }
+    if (typeof data.video_url === 'string') {
+      result.video_url = data.video_url.trim();
+    }
+  }
+
+  // Optional media_type
+  if (data.media_type !== undefined) {
+    if (!['image', 'video', 'none'].includes(data.media_type as string)) {
+      return null;
+    }
+    result.media_type = data.media_type as 'image' | 'video' | 'none';
   }
 
   return result;
@@ -377,6 +399,20 @@ function sanitizePostUpdate(body: unknown): Partial<CreatePostInput> | null {
       return null;
     }
     sanitized.image_url = typeof data.image_url === 'string' ? data.image_url.trim() : undefined;
+  }
+
+  if (data.video_url !== undefined) {
+    if (data.video_url !== null && typeof data.video_url !== 'string') {
+      return null;
+    }
+    sanitized.video_url = typeof data.video_url === 'string' ? data.video_url.trim() : undefined;
+  }
+
+  if (data.media_type !== undefined) {
+    if (!['image', 'video', 'none'].includes(data.media_type as string)) {
+      return null;
+    }
+    sanitized.media_type = data.media_type as 'image' | 'video' | 'none';
   }
 
   return Object.keys(sanitized).length > 0 ? sanitized : null;
@@ -449,6 +485,8 @@ async function createPostInSupabase(
       user_id: userId,
       content: data.content,
       image_url: data.image_url || null,
+      video_url: data.video_url || null,
+      media_type: data.media_type || 'none',
     }),
   });
 

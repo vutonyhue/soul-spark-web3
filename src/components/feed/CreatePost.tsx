@@ -39,7 +39,9 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
     
     const { data, error } = await createPost({ 
       content: content.trim(),
-      image_url: imageUrl || videoUrl || undefined,
+      image_url: imageUrl || undefined,
+      video_url: videoUrl || undefined,
+      media_type: currentMediaType,
     });
     
     if (error) {
