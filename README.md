@@ -1,5 +1,7 @@
 # Welcome to your Lovable project
 
+![Deploy Worker](https://github.com/<OWNER>/<REPO>/actions/workflows/deploy-worker.yml/badge.svg)
+
 ## Project info
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
