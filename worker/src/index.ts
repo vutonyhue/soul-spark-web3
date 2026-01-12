@@ -40,6 +40,11 @@ const MAX_POST_CONTENT_LENGTH = 5000;
 const DEFAULT_POSTS_LIMIT = 20;
 const MAX_POSTS_LIMIT = 100;
 
+// Comments constants
+const MAX_COMMENT_LENGTH = 2000;
+const DEFAULT_COMMENTS_LIMIT = 20;
+const MAX_COMMENTS_LIMIT = 50;
+
 // Media constants
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -56,6 +61,28 @@ interface PresignResponse {
   token: string;
   publicUrl: string;
   path: string;
+}
+
+// ========== LIKES & COMMENTS TYPES ==========
+interface LikeData {
+  id: string;
+  post_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+interface CommentData {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  author?: {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  };
 }
 
 // ========== JWKS SINGLETON (Cached in Worker memory) ==========
@@ -468,6 +495,204 @@ async function deletePostFromSupabase(postId: string, env: Env): Promise<boolean
   return response.ok;
 }
 
+// ========== LIKES SUPABASE HELPERS ==========
+async function getLikeByUserAndPost(userId: string, postId: string, env: Env): Promise<LikeData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/likes?user_id=eq.${userId}&post_id=eq.${postId}&select=*`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) return null;
+  const likes = await response.json() as LikeData[];
+  return likes[0] || null;
+}
+
+async function createLikeInSupabase(userId: string, postId: string, env: Env): Promise<LikeData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/likes`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify({ user_id: userId, post_id: postId }),
+  });
+
+  if (!response.ok) {
+    console.error('Supabase create like error:', response.status);
+    return null;
+  }
+
+  const likes = await response.json() as LikeData[];
+  return likes[0] || null;
+}
+
+async function deleteLikeFromSupabase(userId: string, postId: string, env: Env): Promise<boolean> {
+  const url = `${env.SUPABASE_URL}/rest/v1/likes?user_id=eq.${userId}&post_id=eq.${postId}`;
+  
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  return response.ok;
+}
+
+async function updatePostLikesCount(postId: string, delta: number, env: Env): Promise<boolean> {
+  // Get current likes_count
+  const post = await getPostById(postId, env);
+  if (!post) return false;
+  
+  const newCount = Math.max(0, (post.likes_count || 0) + delta);
+  
+  const url = `${env.SUPABASE_URL}/rest/v1/posts?id=eq.${postId}`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ likes_count: newCount }),
+  });
+
+  return response.ok;
+}
+
+// ========== COMMENTS SUPABASE HELPERS ==========
+async function getCommentsFromSupabase(
+  postId: string,
+  env: Env,
+  limit: number = DEFAULT_COMMENTS_LIMIT,
+  offset: number = 0
+): Promise<{ comments: CommentData[]; total: number } | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/comments?post_id=eq.${postId}&select=*,author:profiles!user_id(id,display_name,avatar_url)&order=created_at.asc&limit=${limit}&offset=${offset}`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'count=exact',
+    },
+  });
+
+  if (!response.ok) {
+    console.error('Supabase GET comments error:', response.status);
+    return null;
+  }
+
+  const comments = await response.json() as CommentData[];
+  const total = parseInt(response.headers.get('content-range')?.split('/')[1] || '0', 10);
+  
+  return { comments, total };
+}
+
+async function getCommentById(commentId: string, env: Env): Promise<CommentData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/comments?id=eq.${commentId}&select=*`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) return null;
+  const comments = await response.json() as CommentData[];
+  return comments[0] || null;
+}
+
+async function createCommentInSupabase(
+  userId: string,
+  postId: string,
+  content: string,
+  env: Env
+): Promise<CommentData | null> {
+  const url = `${env.SUPABASE_URL}/rest/v1/comments`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify({ user_id: userId, post_id: postId, content }),
+  });
+
+  if (!response.ok) {
+    console.error('Supabase create comment error:', response.status);
+    return null;
+  }
+
+  const comments = await response.json() as CommentData[];
+  const comment = comments[0];
+  
+  // Fetch author info
+  if (comment) {
+    const author = await getProfileFromSupabase(userId, env);
+    if (author) {
+      comment.author = {
+        id: author.id,
+        display_name: author.display_name,
+        avatar_url: author.avatar_url,
+      };
+    }
+  }
+  
+  return comment || null;
+}
+
+async function deleteCommentFromSupabase(commentId: string, env: Env): Promise<boolean> {
+  const url = `${env.SUPABASE_URL}/rest/v1/comments?id=eq.${commentId}`;
+  
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  return response.ok;
+}
+
+async function updatePostCommentsCount(postId: string, delta: number, env: Env): Promise<boolean> {
+  const post = await getPostById(postId, env);
+  if (!post) return false;
+  
+  const newCount = Math.max(0, (post.comments_count || 0) + delta);
+  
+  const url = `${env.SUPABASE_URL}/rest/v1/posts?id=eq.${postId}`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ comments_count: newCount }),
+  });
+
+  return response.ok;
+}
+
 // ========== API HANDLERS ==========
 async function handleGetProfile(userId: string, request: Request, env: Env): Promise<Response> {
   const profile = await getProfileFromSupabase(userId, env);
@@ -718,6 +943,158 @@ async function handleDeletePost(userId: string, postId: string, request: Request
   return jsonResponse({ success: true }, 200, env, request);
 }
 
+// ========== LIKES API HANDLERS ==========
+async function handleLikePost(userId: string, postId: string, request: Request, env: Env): Promise<Response> {
+  // Check if post exists
+  const post = await getPostById(postId, env);
+  if (!post) {
+    return errorResponse('Post not found', 404, env, request);
+  }
+
+  // Check if already liked
+  const existingLike = await getLikeByUserAndPost(userId, postId, env);
+  if (existingLike) {
+    return jsonResponse({ success: true, liked: true, message: 'Already liked' }, 200, env, request);
+  }
+
+  // Create like
+  const like = await createLikeInSupabase(userId, postId, env);
+  if (!like) {
+    return errorResponse('Failed to like post', 500, env, request);
+  }
+
+  // Update likes count
+  await updatePostLikesCount(postId, 1, env);
+
+  return jsonResponse({ success: true, liked: true }, 201, env, request);
+}
+
+async function handleUnlikePost(userId: string, postId: string, request: Request, env: Env): Promise<Response> {
+  // Check if post exists
+  const post = await getPostById(postId, env);
+  if (!post) {
+    return errorResponse('Post not found', 404, env, request);
+  }
+
+  // Check if like exists
+  const existingLike = await getLikeByUserAndPost(userId, postId, env);
+  if (!existingLike) {
+    return jsonResponse({ success: true, liked: false, message: 'Not liked' }, 200, env, request);
+  }
+
+  // Delete like
+  const success = await deleteLikeFromSupabase(userId, postId, env);
+  if (!success) {
+    return errorResponse('Failed to unlike post', 500, env, request);
+  }
+
+  // Update likes count
+  await updatePostLikesCount(postId, -1, env);
+
+  return jsonResponse({ success: true, liked: false }, 200, env, request);
+}
+
+async function handleGetLikeStatus(userId: string, postId: string, request: Request, env: Env): Promise<Response> {
+  const like = await getLikeByUserAndPost(userId, postId, env);
+  return jsonResponse({ success: true, liked: !!like }, 200, env, request);
+}
+
+// ========== COMMENTS API HANDLERS ==========
+async function handleGetComments(postId: string, request: Request, env: Env): Promise<Response> {
+  // Check if post exists
+  const post = await getPostById(postId, env);
+  if (!post) {
+    return errorResponse('Post not found', 404, env, request);
+  }
+
+  const url = new URL(request.url);
+  const limit = Math.min(
+    parseInt(url.searchParams.get('limit') || String(DEFAULT_COMMENTS_LIMIT), 10),
+    MAX_COMMENTS_LIMIT
+  );
+  const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+
+  const result = await getCommentsFromSupabase(postId, env, limit, offset);
+  
+  if (!result) {
+    return errorResponse('Failed to fetch comments', 500, env, request);
+  }
+
+  return jsonResponse({
+    success: true,
+    comments: result.comments,
+    total: result.total,
+    limit,
+    offset,
+  }, 200, env, request);
+}
+
+async function handleCreateComment(userId: string, postId: string, request: Request, env: Env): Promise<Response> {
+  // Check if post exists
+  const post = await getPostById(postId, env);
+  if (!post) {
+    return errorResponse('Post not found', 404, env, request);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  // Validate content
+  if (!body || typeof body !== 'object') {
+    return errorResponse('Invalid request body', 400, env, request);
+  }
+
+  const data = body as Record<string, unknown>;
+  if (typeof data.content !== 'string' || data.content.trim().length === 0) {
+    return errorResponse('Content is required', 400, env, request);
+  }
+
+  const content = data.content.trim();
+  if (content.length > MAX_COMMENT_LENGTH) {
+    return errorResponse(`Content must be under ${MAX_COMMENT_LENGTH} characters`, 400, env, request);
+  }
+
+  const comment = await createCommentInSupabase(userId, postId, content, env);
+  
+  if (!comment) {
+    return errorResponse('Failed to create comment', 500, env, request);
+  }
+
+  // Update comments count
+  await updatePostCommentsCount(postId, 1, env);
+
+  return jsonResponse({ success: true, comment }, 201, env, request);
+}
+
+async function handleDeleteComment(userId: string, commentId: string, request: Request, env: Env): Promise<Response> {
+  // Check if comment exists
+  const comment = await getCommentById(commentId, env);
+  if (!comment) {
+    return errorResponse('Comment not found', 404, env, request);
+  }
+
+  // Check ownership
+  if (comment.user_id !== userId) {
+    return errorResponse('Access denied', 403, env, request);
+  }
+
+  const postId = comment.post_id;
+
+  const success = await deleteCommentFromSupabase(commentId, env);
+  if (!success) {
+    return errorResponse('Failed to delete comment', 500, env, request);
+  }
+
+  // Update comments count
+  await updatePostCommentsCount(postId, -1, env);
+
+  return jsonResponse({ success: true }, 200, env, request);
+}
+
 // ========== MAIN ROUTER ==========
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -779,6 +1156,61 @@ export default {
           handleDeletePost(userId, postId, req, e)
         );
       }
+    }
+
+    // ===== LIKES ROUTES =====
+    // POST /api/posts/:id/like - Protected: like post
+    const likeMatch = path.match(/^\/api\/posts\/([a-f0-9-]+)\/like$/);
+    if (likeMatch) {
+      const postId = likeMatch[1];
+      
+      if (method === 'POST') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleLikePost(userId, postId, req, e)
+        );
+      }
+      
+      if (method === 'DELETE') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleUnlikePost(userId, postId, req, e)
+        );
+      }
+    }
+
+    // GET /api/posts/:id/like/status - Protected: check like status
+    const likeStatusMatch = path.match(/^\/api\/posts\/([a-f0-9-]+)\/like\/status$/);
+    if (likeStatusMatch && method === 'GET') {
+      const postId = likeStatusMatch[1];
+      return withAuth(request, env, (userId, req, e) => 
+        handleGetLikeStatus(userId, postId, req, e)
+      );
+    }
+
+    // ===== COMMENTS ROUTES =====
+    // GET/POST /api/posts/:id/comments
+    const commentsMatch = path.match(/^\/api\/posts\/([a-f0-9-]+)\/comments$/);
+    if (commentsMatch) {
+      const postId = commentsMatch[1];
+      
+      if (method === 'GET') {
+        // Public endpoint
+        return handleGetComments(postId, request, env);
+      }
+      
+      if (method === 'POST') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleCreateComment(userId, postId, req, e)
+        );
+      }
+    }
+
+    // DELETE /api/comments/:id - Protected: delete comment
+    const commentDeleteMatch = path.match(/^\/api\/comments\/([a-f0-9-]+)$/);
+    if (commentDeleteMatch && method === 'DELETE') {
+      const commentId = commentDeleteMatch[1];
+      return withAuth(request, env, (userId, req, e) => 
+        handleDeleteComment(userId, commentId, req, e)
+      );
     }
 
     // ===== 404 =====
