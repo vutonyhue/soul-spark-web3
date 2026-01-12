@@ -25,6 +25,7 @@ import { updatePost, deletePost, likePost, unlikePost, getLikeStatus, Post } fro
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import CommentSection from './CommentSection';
+import VideoPlayer from '@/components/ui/video-player';
 
 interface PostCardProps {
   postId: string;
@@ -278,23 +279,15 @@ const PostCard: React.FC<PostCardProps> = ({
                   </Button>
                 </div>
               ) : (
-                <video
+                <VideoPlayer
                   src={videoUrl}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className="w-full max-h-[500px] bg-black object-contain"
                   poster={image || undefined}
-                  onError={(e) => {
-                    console.error('Video load error:', e, videoUrl);
+                  className="w-full max-h-[500px]"
+                  onError={() => {
+                    console.error('Video load error:', videoUrl);
                     setVideoError(true);
                   }}
-                  onLoadedMetadata={() => {
-                    setVideoError(false);
-                  }}
-                >
-                  Trình duyệt của bạn không hỗ trợ video.
-                </video>
+                />
               )}
             </div>
           )}
