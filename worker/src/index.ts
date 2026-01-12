@@ -17,6 +17,9 @@ interface Env {
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   ALLOWED_ORIGINS?: string;
+  // R2 Storage
+  MEDIA_BUCKET: R2Bucket;
+  R2_PUBLIC_URL: string;
 }
 
 interface ProfileData {
@@ -50,6 +53,12 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MEDIA_PURPOSES = ['avatar', 'post'] as const;
 
+// Video constants
+const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB
+const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
+const VIDEO_PURPOSES = ['post', 'story'] as const;
+const CHUNK_MIN_SIZE = 5 * 1024 * 1024; // 5MB minimum chunk size for multipart
+
 interface PresignRequest {
   filename: string;
   contentType: string;
@@ -61,6 +70,19 @@ interface PresignResponse {
   token: string;
   publicUrl: string;
   path: string;
+}
+
+// Video upload types
+interface VideoPresignRequest {
+  filename: string;
+  contentType: string;
+  purpose: 'post' | 'story';
+  fileSize: number;
+}
+
+interface MultipartPart {
+  partNumber: number;
+  etag: string;
 }
 
 // ========== LIKES & COMMENTS TYPES ==========
@@ -828,9 +850,250 @@ async function handleHealthCheck(request: Request, env: Env): Response {
   return jsonResponse({
     success: true,
     status: 'healthy',
-    version: '2.2.0',
-    features: ['jwks-verification', 'cors-whitelist', 'input-validation', 'posts-api', 'media-upload']
+    version: '2.3.0',
+    features: ['jwks-verification', 'cors-whitelist', 'input-validation', 'posts-api', 'media-upload', 'video-upload-r2']
   }, 200, env, request);
+}
+
+// ========== VIDEO UPLOAD HANDLERS (R2) ==========
+function validateVideoPresignRequest(body: unknown): VideoPresignRequest | null {
+  if (!body || typeof body !== 'object') return null;
+  
+  const data = body as Record<string, unknown>;
+  
+  if (typeof data.filename !== 'string' || data.filename.length === 0) return null;
+  if (typeof data.contentType !== 'string') return null;
+  if (!ALLOWED_VIDEO_TYPES.includes(data.contentType)) return null;
+  if (typeof data.purpose !== 'string') return null;
+  if (!VIDEO_PURPOSES.includes(data.purpose as 'post' | 'story')) return null;
+  if (typeof data.fileSize !== 'number' || data.fileSize <= 0) return null;
+  if (data.fileSize > MAX_VIDEO_SIZE) return null;
+  
+  return {
+    filename: data.filename,
+    contentType: data.contentType,
+    purpose: data.purpose as 'post' | 'story',
+    fileSize: data.fileSize,
+  };
+}
+
+async function handleVideoPresign(userId: string, request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  const validated = validateVideoPresignRequest(body);
+  if (!validated) {
+    return errorResponse(
+      `Invalid request. Required: filename, contentType (${ALLOWED_VIDEO_TYPES.join(', ')}), purpose (post|story), fileSize (max ${MAX_VIDEO_SIZE / 1024 / 1024}MB)`,
+      400, env, request
+    );
+  }
+
+  const { filename, contentType, purpose, fileSize } = validated;
+
+  // Generate unique key
+  const timestamp = Date.now();
+  const ext = filename.split('.').pop() || 'mp4';
+  const key = `videos/${userId}/${purpose}/${timestamp}-${crypto.randomUUID()}.${ext}`;
+
+  try {
+    // For files requiring multipart upload
+    if (fileSize > CHUNK_MIN_SIZE) {
+      const multipartUpload = await env.MEDIA_BUCKET.createMultipartUpload(key, {
+        httpMetadata: {
+          contentType: contentType,
+        },
+      });
+
+      return jsonResponse({
+        success: true,
+        uploadId: multipartUpload.uploadId,
+        key: key,
+        isMultipart: true,
+        chunkSize: CHUNK_MIN_SIZE,
+      }, 200, env, request);
+    } else {
+      // For smaller files, return direct upload info
+      return jsonResponse({
+        success: true,
+        key: key,
+        isMultipart: false,
+        publicUrl: `${env.R2_PUBLIC_URL}/${key}`,
+      }, 200, env, request);
+    }
+  } catch (error) {
+    console.error('Error creating multipart upload:', error);
+    return errorResponse('Failed to initiate upload', 500, env, request);
+  }
+}
+
+async function handleVideoPartUpload(userId: string, request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const uploadId = url.searchParams.get('uploadId');
+  const key = url.searchParams.get('key');
+  const partNumberStr = url.searchParams.get('partNumber');
+
+  if (!uploadId || !key || !partNumberStr) {
+    return errorResponse('Missing required parameters: uploadId, key, partNumber', 400, env, request);
+  }
+
+  // Verify user owns this key
+  if (!key.includes(`/${userId}/`)) {
+    return errorResponse('Access denied', 403, env, request);
+  }
+
+  const partNumber = parseInt(partNumberStr, 10);
+  if (isNaN(partNumber) || partNumber < 1) {
+    return errorResponse('Invalid partNumber', 400, env, request);
+  }
+
+  try {
+    const body = await request.arrayBuffer();
+    
+    const multipartUpload = env.MEDIA_BUCKET.resumeMultipartUpload(key, uploadId);
+    const uploadedPart = await multipartUpload.uploadPart(partNumber, body);
+
+    return jsonResponse({
+      success: true,
+      etag: uploadedPart.etag,
+      partNumber: partNumber,
+    }, 200, env, request);
+  } catch (error) {
+    console.error('Error uploading part:', error);
+    return errorResponse('Failed to upload part', 500, env, request);
+  }
+}
+
+async function handleVideoComplete(userId: string, request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  if (!body || typeof body !== 'object') {
+    return errorResponse('Invalid request body', 400, env, request);
+  }
+
+  const data = body as Record<string, unknown>;
+  const uploadId = data.uploadId as string;
+  const key = data.key as string;
+  const parts = data.parts as MultipartPart[];
+
+  if (!uploadId || !key || !Array.isArray(parts) || parts.length === 0) {
+    return errorResponse('Missing required fields: uploadId, key, parts', 400, env, request);
+  }
+
+  // Verify user owns this key
+  if (!key.includes(`/${userId}/`)) {
+    return errorResponse('Access denied', 403, env, request);
+  }
+
+  // Validate parts structure
+  for (const part of parts) {
+    if (typeof part.partNumber !== 'number' || typeof part.etag !== 'string') {
+      return errorResponse('Invalid parts format. Each part must have partNumber and etag', 400, env, request);
+    }
+  }
+
+  try {
+    const multipartUpload = env.MEDIA_BUCKET.resumeMultipartUpload(key, uploadId);
+    
+    // Sort parts by partNumber and convert to R2 format
+    const sortedParts = parts
+      .sort((a, b) => a.partNumber - b.partNumber)
+      .map(p => ({ partNumber: p.partNumber, etag: p.etag }));
+
+    await multipartUpload.complete(sortedParts);
+
+    const publicUrl = `${env.R2_PUBLIC_URL}/${key}`;
+
+    return jsonResponse({
+      success: true,
+      publicUrl: publicUrl,
+      key: key,
+    }, 200, env, request);
+  } catch (error) {
+    console.error('Error completing multipart upload:', error);
+    return errorResponse('Failed to complete upload', 500, env, request);
+  }
+}
+
+async function handleVideoDirectUpload(userId: string, request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key');
+  const contentType = url.searchParams.get('contentType') || 'video/mp4';
+
+  if (!key) {
+    return errorResponse('Missing required parameter: key', 400, env, request);
+  }
+
+  // Verify user owns this key
+  if (!key.includes(`/${userId}/`)) {
+    return errorResponse('Access denied', 403, env, request);
+  }
+
+  try {
+    const body = await request.arrayBuffer();
+    
+    await env.MEDIA_BUCKET.put(key, body, {
+      httpMetadata: {
+        contentType: contentType,
+      },
+    });
+
+    const publicUrl = `${env.R2_PUBLIC_URL}/${key}`;
+
+    return jsonResponse({
+      success: true,
+      publicUrl: publicUrl,
+      key: key,
+    }, 200, env, request);
+  } catch (error) {
+    console.error('Error uploading video:', error);
+    return errorResponse('Failed to upload video', 500, env, request);
+  }
+}
+
+async function handleVideoAbort(userId: string, request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  if (!body || typeof body !== 'object') {
+    return errorResponse('Invalid request body', 400, env, request);
+  }
+
+  const data = body as Record<string, unknown>;
+  const uploadId = data.uploadId as string;
+  const key = data.key as string;
+
+  if (!uploadId || !key) {
+    return errorResponse('Missing required fields: uploadId, key', 400, env, request);
+  }
+
+  // Verify user owns this key
+  if (!key.includes(`/${userId}/`)) {
+    return errorResponse('Access denied', 403, env, request);
+  }
+
+  try {
+    const multipartUpload = env.MEDIA_BUCKET.resumeMultipartUpload(key, uploadId);
+    await multipartUpload.abort();
+
+    return jsonResponse({ success: true }, 200, env, request);
+  } catch (error) {
+    console.error('Error aborting multipart upload:', error);
+    return errorResponse('Failed to abort upload', 500, env, request);
+  }
 }
 
 // ========== POSTS API HANDLERS ==========
@@ -1127,6 +1390,32 @@ export default {
 
     if (path === '/api/media/presign' && method === 'POST') {
       return withAuth(request, env, handleMediaPresign);
+    }
+
+    // ===== VIDEO UPLOAD ROUTES (R2) =====
+    // POST /api/video/presign - Protected: initiate video upload
+    if (path === '/api/video/presign' && method === 'POST') {
+      return withAuth(request, env, handleVideoPresign);
+    }
+
+    // PUT /api/video/part - Protected: upload video chunk
+    if (path === '/api/video/part' && method === 'PUT') {
+      return withAuth(request, env, handleVideoPartUpload);
+    }
+
+    // POST /api/video/complete - Protected: complete multipart upload
+    if (path === '/api/video/complete' && method === 'POST') {
+      return withAuth(request, env, handleVideoComplete);
+    }
+
+    // PUT /api/video/direct - Protected: direct upload for small files
+    if (path === '/api/video/direct' && method === 'PUT') {
+      return withAuth(request, env, handleVideoDirectUpload);
+    }
+
+    // POST /api/video/abort - Protected: abort multipart upload
+    if (path === '/api/video/abort' && method === 'POST') {
+      return withAuth(request, env, handleVideoAbort);
     }
 
     // ===== POSTS ROUTES =====

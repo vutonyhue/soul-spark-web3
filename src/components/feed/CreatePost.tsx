@@ -8,17 +8,24 @@ import { createPost, Post } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import ImageUpload from '@/components/ui/image-upload';
+import VideoUpload from '@/components/ui/video-upload';
 
 interface CreatePostProps {
   onPostCreated?: (post: Post) => void;
 }
 
+type MediaType = 'none' | 'image' | 'video';
+
 const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
   const [content, setContent] = useState('');
   const [imageUrl, setImageUrl] = useState<string>('');
+  const [videoUrl, setVideoUrl] = useState<string>('');
   const [showImageUpload, setShowImageUpload] = useState(false);
+  const [showVideoUpload, setShowVideoUpload] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const { user, profile } = useAuth();
+
+  const currentMediaType: MediaType = videoUrl ? 'video' : imageUrl ? 'image' : 'none';
 
   const handleSubmit = async () => {
     if (!content.trim()) return;
@@ -32,7 +39,7 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
     
     const { data, error } = await createPost({ 
       content: content.trim(),
-      image_url: imageUrl || undefined,
+      image_url: imageUrl || videoUrl || undefined,
     });
     
     if (error) {
@@ -41,11 +48,38 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
       toast.success('Đã đăng bài thành công!');
       setContent('');
       setImageUrl('');
+      setVideoUrl('');
       setShowImageUpload(false);
+      setShowVideoUpload(false);
       onPostCreated?.(data.post);
     }
     
     setSubmitting(false);
+  };
+
+  const handleImageUploadClick = () => {
+    if (videoUrl) {
+      toast.info('Vui lòng xóa video trước khi thêm ảnh');
+      return;
+    }
+    setShowImageUpload(!showImageUpload);
+    setShowVideoUpload(false);
+  };
+
+  const handleVideoUploadClick = () => {
+    if (imageUrl) {
+      toast.info('Vui lòng xóa ảnh trước khi thêm video');
+      return;
+    }
+    setShowVideoUpload(!showVideoUpload);
+    setShowImageUpload(false);
+  };
+
+  const handleRemoveMedia = () => {
+    setImageUrl('');
+    setVideoUrl('');
+    setShowImageUpload(false);
+    setShowVideoUpload(false);
   };
 
   const displayName = profile?.display_name || user?.email?.split('@')[0] || 'U';
@@ -85,10 +119,27 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
               variant="destructive"
               size="icon"
               className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
-              onClick={() => {
-                setImageUrl('');
-                setShowImageUpload(false);
-              }}
+              onClick={handleRemoveMedia}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+
+        {/* Video Preview */}
+        {videoUrl && (
+          <div className="mt-3 relative">
+            <video 
+              src={videoUrl} 
+              controls
+              className="rounded-lg max-h-60 w-full object-contain bg-black/5"
+            />
+            <Button
+              type="button"
+              variant="destructive"
+              size="icon"
+              className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+              onClick={handleRemoveMedia}
             >
               <X className="h-3 w-3" />
             </Button>
@@ -96,7 +147,7 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
         )}
 
         {/* Image Upload */}
-        {showImageUpload && !imageUrl && (
+        {showImageUpload && !imageUrl && !videoUrl && (
           <div className="mt-3">
             <ImageUpload
               purpose="post"
@@ -108,20 +159,40 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
             />
           </div>
         )}
+
+        {/* Video Upload */}
+        {showVideoUpload && !videoUrl && !imageUrl && (
+          <div className="mt-3">
+            <VideoUpload
+              purpose="post"
+              onUploadComplete={(url) => {
+                setVideoUrl(url);
+                if (url) setShowVideoUpload(false);
+              }}
+              variant="dropzone"
+            />
+          </div>
+        )}
         
         <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
           <div className="flex gap-1">
             <Button 
               variant="ghost" 
               size="sm" 
-              className="text-primary hover:bg-primary/10" 
+              className={`text-primary hover:bg-primary/10 ${imageUrl ? 'bg-primary/10' : ''}`}
               disabled={!user}
-              onClick={() => setShowImageUpload(!showImageUpload)}
+              onClick={handleImageUploadClick}
             >
               <Image className="h-5 w-5 mr-1" />
               <span className="hidden sm:inline">Ảnh</span>
             </Button>
-            <Button variant="ghost" size="sm" className="text-accent hover:bg-accent/10" disabled={!user}>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className={`text-accent hover:bg-accent/10 ${videoUrl ? 'bg-accent/10' : ''}`}
+              disabled={!user}
+              onClick={handleVideoUploadClick}
+            >
               <Video className="h-5 w-5 mr-1" />
               <span className="hidden sm:inline">Video</span>
             </Button>
