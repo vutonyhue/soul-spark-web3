@@ -40,6 +40,24 @@ const MAX_POST_CONTENT_LENGTH = 5000;
 const DEFAULT_POSTS_LIMIT = 20;
 const MAX_POSTS_LIMIT = 100;
 
+// Media constants
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const MEDIA_PURPOSES = ['avatar', 'post'] as const;
+
+interface PresignRequest {
+  filename: string;
+  contentType: string;
+  purpose: 'avatar' | 'post';
+}
+
+interface PresignResponse {
+  signedUrl: string;
+  token: string;
+  publicUrl: string;
+  path: string;
+}
+
 // ========== JWKS SINGLETON (Cached in Worker memory) ==========
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
@@ -484,20 +502,109 @@ async function handleUpdateProfile(userId: string, request: Request, env: Env): 
 }
 
 async function handleMediaPresign(userId: string, request: Request, env: Env): Promise<Response> {
-  // TODO: Implement R2/Storage presigned URL generation
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400, env, request);
+  }
+
+  // Validate request
+  const validated = validatePresignRequest(body);
+  if (!validated) {
+    return errorResponse(
+      `Invalid request. Required: filename, contentType (${ALLOWED_MEDIA_TYPES.join(', ')}), purpose (avatar|post)`,
+      400, env, request
+    );
+  }
+
+  const { filename, contentType, purpose } = validated;
+
+  // Generate unique file path
+  const timestamp = Date.now();
+  const ext = filename.split('.').pop() || 'jpg';
+  const uniqueFilename = purpose === 'avatar' 
+    ? `avatar-${timestamp}.${ext}`
+    : `post-${timestamp}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  
+  const filePath = `${userId}/${purpose}s/${uniqueFilename}`;
+
+  // Create signed upload URL using Supabase Storage API
+  const signedUrlResponse = await createSignedUploadUrl(filePath, env);
+  
+  if (!signedUrlResponse) {
+    return errorResponse('Failed to create upload URL', 500, env, request);
+  }
+
+  const publicUrl = `${env.SUPABASE_URL}/storage/v1/object/public/media/${filePath}`;
+
   return jsonResponse({
-    success: false,
-    error: 'Media upload not yet implemented',
-    todo: 'Integrate with Cloudflare R2 or Supabase Storage'
-  }, 501, env, request);
+    success: true,
+    signedUrl: signedUrlResponse.signedUrl,
+    token: signedUrlResponse.token,
+    publicUrl,
+    path: filePath,
+  }, 200, env, request);
+}
+
+function validatePresignRequest(body: unknown): PresignRequest | null {
+  if (!body || typeof body !== 'object') return null;
+  
+  const data = body as Record<string, unknown>;
+  
+  if (typeof data.filename !== 'string' || data.filename.length === 0) return null;
+  if (typeof data.contentType !== 'string') return null;
+  if (!ALLOWED_MEDIA_TYPES.includes(data.contentType)) return null;
+  if (typeof data.purpose !== 'string') return null;
+  if (!MEDIA_PURPOSES.includes(data.purpose as 'avatar' | 'post')) return null;
+  
+  return {
+    filename: data.filename,
+    contentType: data.contentType,
+    purpose: data.purpose as 'avatar' | 'post',
+  };
+}
+
+async function createSignedUploadUrl(
+  path: string,
+  env: Env
+): Promise<{ signedUrl: string; token: string } | null> {
+  const url = `${env.SUPABASE_URL}/storage/v1/object/upload/sign/media/${path}`;
+  
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        expiresIn: 600, // 10 minutes
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Supabase signed URL error:', response.status, await response.text());
+      return null;
+    }
+
+    const data = await response.json() as { url: string; token: string };
+    return {
+      signedUrl: `${env.SUPABASE_URL}/storage/v1${data.url}`,
+      token: data.token,
+    };
+  } catch (error) {
+    console.error('Error creating signed URL:', error);
+    return null;
+  }
 }
 
 async function handleHealthCheck(request: Request, env: Env): Response {
   return jsonResponse({
     success: true,
     status: 'healthy',
-    version: '2.1.0',
-    features: ['jwks-verification', 'cors-whitelist', 'input-validation', 'posts-api']
+    version: '2.2.0',
+    features: ['jwks-verification', 'cors-whitelist', 'input-validation', 'posts-api', 'media-upload']
   }, 200, env, request);
 }
 

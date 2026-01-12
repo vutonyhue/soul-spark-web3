@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Image, Video, Smile, MapPin, Send, Loader2 } from 'lucide-react';
+import { Image, Video, Smile, MapPin, Send, Loader2, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { createPost, Post } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import ImageUpload from '@/components/ui/image-upload';
 
 interface CreatePostProps {
   onPostCreated?: (post: Post) => void;
@@ -14,6 +15,8 @@ interface CreatePostProps {
 
 const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
   const [content, setContent] = useState('');
+  const [imageUrl, setImageUrl] = useState<string>('');
+  const [showImageUpload, setShowImageUpload] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const { user, profile } = useAuth();
 
@@ -27,13 +30,18 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
 
     setSubmitting(true);
     
-    const { data, error } = await createPost({ content: content.trim() });
+    const { data, error } = await createPost({ 
+      content: content.trim(),
+      image_url: imageUrl || undefined,
+    });
     
     if (error) {
       toast.error('Không thể đăng bài: ' + error);
     } else if (data) {
       toast.success('Đã đăng bài thành công!');
       setContent('');
+      setImageUrl('');
+      setShowImageUpload(false);
       onPostCreated?.(data.post);
     }
     
@@ -63,10 +71,53 @@ const CreatePost: React.FC<CreatePostProps> = ({ onPostCreated }) => {
             />
           </div>
         </div>
+
+        {/* Image Preview */}
+        {imageUrl && (
+          <div className="mt-3 relative inline-block">
+            <img 
+              src={imageUrl} 
+              alt="Post image preview" 
+              className="rounded-lg max-h-60 object-cover"
+            />
+            <Button
+              type="button"
+              variant="destructive"
+              size="icon"
+              className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+              onClick={() => {
+                setImageUrl('');
+                setShowImageUpload(false);
+              }}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+
+        {/* Image Upload */}
+        {showImageUpload && !imageUrl && (
+          <div className="mt-3">
+            <ImageUpload
+              purpose="post"
+              onUploadComplete={(url) => {
+                setImageUrl(url);
+                if (url) setShowImageUpload(false);
+              }}
+              variant="dropzone"
+            />
+          </div>
+        )}
         
         <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
           <div className="flex gap-1">
-            <Button variant="ghost" size="sm" className="text-primary hover:bg-primary/10" disabled={!user}>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="text-primary hover:bg-primary/10" 
+              disabled={!user}
+              onClick={() => setShowImageUpload(!showImageUpload)}
+            >
               <Image className="h-5 w-5 mr-1" />
               <span className="hidden sm:inline">Ảnh</span>
             </Button>

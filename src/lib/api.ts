@@ -101,18 +101,73 @@ export async function updateMyProfile(
   });
 }
 
+// ========== MEDIA UPLOAD API ==========
+
+interface PresignUrlResponse {
+  signedUrl: string;
+  token: string;
+  publicUrl: string;
+  path: string;
+}
+
 /**
  * Request presigned URL for media upload
- * (Not implemented yet on worker side)
  */
 export async function getMediaPresignUrl(
   filename: string,
-  contentType: string
-): Promise<ApiResponse<{ uploadUrl: string; publicUrl: string }>> {
-  return fetchWithAuth('/api/media/presign', {
+  contentType: string,
+  purpose: 'avatar' | 'post'
+): Promise<ApiResponse<PresignUrlResponse>> {
+  return fetchWithAuth<PresignUrlResponse>('/api/media/presign', {
     method: 'POST',
-    body: JSON.stringify({ filename, contentType }),
+    body: JSON.stringify({ filename, contentType, purpose }),
   });
+}
+
+/**
+ * Upload file to Supabase Storage using signed URL
+ */
+export async function uploadMedia(
+  file: File,
+  purpose: 'avatar' | 'post'
+): Promise<ApiResponse<{ publicUrl: string }>> {
+  // Step 1: Get presigned URL
+  const { data: presignData, error: presignError } = await getMediaPresignUrl(
+    file.name,
+    file.type,
+    purpose
+  );
+
+  if (presignError || !presignData) {
+    return { data: null, error: presignError || 'Failed to get upload URL' };
+  }
+
+  // Step 2: Upload file directly to storage using signed URL
+  try {
+    const uploadResponse = await fetch(presignData.signedUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': file.type,
+      },
+      body: file,
+    });
+
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      console.error('Upload error:', errorText);
+      return { data: null, error: 'Failed to upload file' };
+    }
+
+    return { 
+      data: { publicUrl: presignData.publicUrl }, 
+      error: null 
+    };
+  } catch (error) {
+    return { 
+      data: null, 
+      error: error instanceof Error ? error.message : 'Upload failed' 
+    };
+  }
 }
 
 /**
