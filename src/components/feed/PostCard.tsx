@@ -282,7 +282,7 @@ const PostCard: React.FC<PostCardProps> = ({
                 <VideoPlayer
                   src={videoUrl}
                   poster={image || undefined}
-                  className="w-full max-h-[500px]"
+                  className="w-full"
                   onError={() => {
                     console.error('Video load error:', videoUrl);
                     setVideoError(true);

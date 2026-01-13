@@ -44,6 +44,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [buffered, setBuffered] = useState(0);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState(16 / 9);
 
   // Reset hide controls timer
   const resetHideTimer = useCallback(() => {
@@ -130,7 +131,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setShowControls(true);
     };
     const handleTimeUpdate = () => setCurrentTime(video.currentTime);
-    const handleLoadedMetadata = () => setDuration(video.duration);
+    const handleLoadedMetadata = () => {
+      setDuration(video.duration);
+      // Calculate actual aspect ratio from video dimensions
+      if (video.videoWidth && video.videoHeight) {
+        setAspectRatio(video.videoWidth / video.videoHeight);
+      }
+    };
     const handleProgress = () => {
       if (video.buffered.length > 0) {
         const bufferedEnd = video.buffered.end(video.buffered.length - 1);
@@ -235,9 +242,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       ref={containerRef}
       className={cn(
         'relative group bg-black overflow-hidden',
-        isFullscreen ? 'fixed inset-0 z-50' : 'rounded-lg',
+        isFullscreen ? 'fixed inset-0 z-50 flex items-center justify-center' : 'rounded-lg',
         className
       )}
+      style={!isFullscreen ? { aspectRatio: aspectRatio } : undefined}
       onMouseMove={resetHideTimer}
       onMouseLeave={() => isPlaying && setShowControls(false)}
       tabIndex={0}
@@ -249,7 +257,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         poster={poster}
         playsInline
         preload="metadata"
-        className="w-full h-full object-contain"
+        className={cn(
+          'object-contain',
+          isFullscreen ? 'max-w-full max-h-full' : 'w-full h-full'
+        )}
         onClick={togglePlay}
       />
 
