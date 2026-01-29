@@ -92,6 +92,192 @@ export type Database = {
           },
         ]
       }
+      oauth_authorization_codes: {
+        Row: {
+          client_id: string
+          code: string
+          code_challenge: string | null
+          code_challenge_method: string | null
+          created_at: string | null
+          expires_at: string
+          id: string
+          nonce: string | null
+          redirect_uri: string
+          scope: string
+          state: string | null
+          used: boolean | null
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          code: string
+          code_challenge?: string | null
+          code_challenge_method?: string | null
+          created_at?: string | null
+          expires_at: string
+          id?: string
+          nonce?: string | null
+          redirect_uri: string
+          scope: string
+          state?: string | null
+          used?: boolean | null
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          code?: string
+          code_challenge?: string | null
+          code_challenge_method?: string | null
+          created_at?: string | null
+          expires_at?: string
+          id?: string
+          nonce?: string | null
+          redirect_uri?: string
+          scope?: string
+          state?: string | null
+          used?: boolean | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "oauth_authorization_codes_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "oauth_clients"
+            referencedColumns: ["client_id"]
+          },
+        ]
+      }
+      oauth_clients: {
+        Row: {
+          client_id: string
+          client_name: string
+          client_secret_hash: string
+          client_uri: string | null
+          created_at: string | null
+          created_by: string | null
+          grant_types: string[] | null
+          id: string
+          is_active: boolean | null
+          is_confidential: boolean | null
+          logo_uri: string | null
+          redirect_uris: string[]
+          scopes: string[] | null
+          updated_at: string | null
+        }
+        Insert: {
+          client_id?: string
+          client_name: string
+          client_secret_hash: string
+          client_uri?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          grant_types?: string[] | null
+          id?: string
+          is_active?: boolean | null
+          is_confidential?: boolean | null
+          logo_uri?: string | null
+          redirect_uris: string[]
+          scopes?: string[] | null
+          updated_at?: string | null
+        }
+        Update: {
+          client_id?: string
+          client_name?: string
+          client_secret_hash?: string
+          client_uri?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          grant_types?: string[] | null
+          id?: string
+          is_active?: boolean | null
+          is_confidential?: boolean | null
+          logo_uri?: string | null
+          redirect_uris?: string[]
+          scopes?: string[] | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      oauth_consents: {
+        Row: {
+          client_id: string
+          created_at: string | null
+          id: string
+          scopes: string[]
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string | null
+          id?: string
+          scopes: string[]
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string | null
+          id?: string
+          scopes?: string[]
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "oauth_consents_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "oauth_clients"
+            referencedColumns: ["client_id"]
+          },
+        ]
+      }
+      oauth_refresh_tokens: {
+        Row: {
+          client_id: string
+          created_at: string | null
+          expires_at: string
+          id: string
+          revoked: boolean | null
+          revoked_at: string | null
+          scope: string
+          token_hash: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string | null
+          expires_at: string
+          id?: string
+          revoked?: boolean | null
+          revoked_at?: string | null
+          scope: string
+          token_hash: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string | null
+          expires_at?: string
+          id?: string
+          revoked?: boolean | null
+          revoked_at?: string | null
+          scope?: string
+          token_hash?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "oauth_refresh_tokens_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "oauth_clients"
+            referencedColumns: ["client_id"]
+          },
+        ]
+      }
       posts: {
         Row: {
           coin_reward: number | null
@@ -178,15 +364,43 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          created_at: string | null
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      cleanup_expired_oauth_data: { Args: never; Returns: undefined }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "moderator" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -313,6 +527,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "moderator", "user"],
+    },
   },
 } as const
