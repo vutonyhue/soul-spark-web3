@@ -21,6 +21,10 @@ SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 # R2 public URL - update this after enabling R2 public access
 R2_PUBLIC_URL = "https://funprofile-media.funecosystem.org"
 
+# OAuth/OIDC Configuration
+FUNID_ISSUER = "https://funprofile-api.funecosystem.org"
+FUNID_FRONTEND_URL = "https://soul-spark-web3.lovable.app"
+
 # CORS: Allowed origins (comma-separated)
 # Development + Lovable Preview
 ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:8080,http://localhost:3000,https://soul-spark-web3.lovable.app,https://1373df92-b445-4f58-a314-38032da2fd6f.lovableproject.com,https://id-preview--1373df92-b445-4f58-a314-38032da2fd6f.lovable.app"
@@ -28,8 +32,11 @@ ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:8080,http://localhost:
 # Production (uncomment and update when deploying):
 # ALLOWED_ORIGINS = "https://funprofile.org,https://www.funprofile.org"
 
-# Secrets (set via: wrangler secret put SUPABASE_SERVICE_ROLE_KEY)
+# Secrets (set via wrangler secret put):
 # SUPABASE_SERVICE_ROLE_KEY = "***"
+# FUNID_RSA_PRIVATE_KEY = "***"  (PEM format RSA private key)
+# FUNID_RSA_PUBLIC_KEY = "***"   (PEM format RSA public key)
+# FUNID_RSA_KID = "funid-key-2026"
 
 # Development settings
 [dev]

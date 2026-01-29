@@ -7,12 +7,21 @@
  * - Service Role Key for Supabase queries (server-side only)
  * - Strict CORS with allowed origins whitelist
  * - Input validation with allowlist/blocklist pattern
+ * - OAuth 2.0 / OIDC Identity Provider endpoints
  */
 
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 
+// OAuth Imports
+import { handleOpenIDConfiguration } from './oauth/discovery';
+import { handleJWKS } from './oauth/jwks';
+import { handleAuthorize, handleAuthorizeCallback } from './oauth/authorize';
+import { handleToken } from './oauth/token';
+import { handleUserInfo } from './oauth/userinfo';
+import type { OAuthEnv } from './oauth/types';
+
 // ========== TYPES ==========
-interface Env {
+interface Env extends OAuthEnv {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
@@ -20,6 +29,12 @@ interface Env {
   // R2 Storage
   MEDIA_BUCKET: R2Bucket;
   R2_PUBLIC_URL: string;
+  // OAuth RSA Keys
+  FUNID_RSA_PRIVATE_KEY?: string;
+  FUNID_RSA_PUBLIC_KEY?: string;
+  FUNID_RSA_KID?: string;
+  FUNID_ISSUER?: string;
+  FUNID_FRONTEND_URL?: string;
 }
 
 interface ProfileData {
@@ -1417,6 +1432,33 @@ export default {
         status: 204,
         headers: getCorsHeaders(request, env),
       });
+    }
+
+    // ===== OIDC DISCOVERY ROUTES (PUBLIC) =====
+    if (path === '/.well-known/openid-configuration' && method === 'GET') {
+      return handleOpenIDConfiguration(request, env);
+    }
+
+    if (path === '/.well-known/jwks.json' && method === 'GET') {
+      return handleJWKS(request, env);
+    }
+
+    // ===== OAUTH ROUTES =====
+    if (path === '/oauth/authorize' && method === 'GET') {
+      return handleAuthorize(request, env);
+    }
+
+    if (path === '/oauth/token' && method === 'POST') {
+      return handleToken(request, env);
+    }
+
+    if (path === '/oauth/userinfo' && method === 'GET') {
+      return handleUserInfo(request, env);
+    }
+
+    // Callback from frontend consent page (requires auth)
+    if (path === '/oauth/authorize/callback' && method === 'POST') {
+      return withAuth(request, env, handleAuthorizeCallback);
     }
 
     // ===== PUBLIC ROUTES =====
