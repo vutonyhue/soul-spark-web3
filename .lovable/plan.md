@@ -1,333 +1,389 @@
 
-# Phase 2: Triển khai OAuth 2.0 Endpoints trên Cloudflare Worker
+
+# Kế hoạch xây dựng tính năng Nhắn tin (Messaging) cho Fun Profile
 
 ## Tổng quan
 
-Mở rộng Cloudflare Worker hiện tại để thêm các OAuth 2.0/OIDC endpoints chuẩn, biến FUN Profile thành một Identity Provider (IdP) hoàn chỉnh.
-
-## Các Endpoints cần triển khai
-
-| Endpoint | Method | Auth | Mô tả |
-|----------|--------|------|-------|
-| `/.well-known/openid-configuration` | GET | Public | OIDC Discovery document |
-| `/.well-known/jwks.json` | GET | Public | Public keys cho JWT verification |
-| `/oauth/authorize` | GET | Session | Authorization endpoint - redirect flow |
-| `/oauth/token` | POST | Client credentials | Token exchange endpoint |
-| `/oauth/userinfo` | GET | Bearer token | User info endpoint |
-
-## Cấu trúc Files mới
-
-```text
-worker/src/
-├── index.ts                    # Mở rộng router (existing)
-├── oauth/
-│   ├── discovery.ts            # OpenID Configuration
-│   ├── jwks.ts                 # JWKS endpoint
-│   ├── authorize.ts            # Authorization endpoint
-│   ├── token.ts                # Token exchange
-│   ├── userinfo.ts             # UserInfo endpoint
-│   └── types.ts                # OAuth types
-└── utils/
-    ├── pkce.ts                 # PKCE utilities
-    └── crypto.ts               # JWT signing với RS256
-```
-
-## Chi tiết Implementation
-
-### 1. Discovery Endpoint (`/.well-known/openid-configuration`)
-
-Trả về document chuẩn OIDC Discovery:
-
-```typescript
-{
-  "issuer": "https://funprofile-api.funecosystem.org",
-  "authorization_endpoint": "https://soul-spark-web3.lovable.app/oauth/consent",
-  "token_endpoint": "https://funprofile-api.funecosystem.org/oauth/token",
-  "userinfo_endpoint": "https://funprofile-api.funecosystem.org/oauth/userinfo",
-  "jwks_uri": "https://funprofile-api.funecosystem.org/.well-known/jwks.json",
-  "scopes_supported": ["openid", "profile", "email", "wallet"],
-  "response_types_supported": ["code"],
-  "grant_types_supported": ["authorization_code", "refresh_token"],
-  "code_challenge_methods_supported": ["S256"],
-  "id_token_signing_alg_values_supported": ["RS256"],
-  "claims_supported": ["sub", "name", "email", "picture", "wallet_address", "camly_balance"]
-}
-```
-
-### 2. JWKS Endpoint (`/.well-known/jwks.json`)
-
-- Đọc RSA public key từ Cloudflare Secret
-- Export dạng JWK format với `kid` (key ID)
-- Hỗ trợ key rotation (multiple keys)
-
-```typescript
-{
-  "keys": [{
-    "kty": "RSA",
-    "kid": "funid-key-2026",
-    "use": "sig",
-    "alg": "RS256",
-    "n": "...",   // modulus base64url
-    "e": "AQAB"  // exponent base64url
-  }]
-}
-```
-
-### 3. Authorization Endpoint (`/oauth/authorize`)
-
-**Flow:**
-1. Validate `client_id`, `redirect_uri`, `response_type=code`
-2. Validate PKCE parameters (`code_challenge`, `code_challenge_method=S256`)
-3. Redirect user to frontend consent page với encrypted params:
-   ```
-   https://soul-spark-web3.lovable.app/oauth/consent?
-     client_id=xxx&
-     scope=openid%20profile&
-     state=xxx&
-     redirect_uri=https://fungames.com/callback&
-     code_challenge=xxx
-   ```
-
-**Validation:**
-- `client_id` phải tồn tại và active trong `oauth_clients`
-- `redirect_uri` phải exact match với registered URIs
-- `state` parameter bắt buộc để chống CSRF
-- PKCE bắt buộc cho tất cả clients
-
-### 4. Token Endpoint (`/oauth/token`)
-
-**Grant types hỗ trợ:**
-
-**a) Authorization Code Grant:**
-```typescript
-POST /oauth/token
-Content-Type: application/x-www-form-urlencoded
-
-grant_type=authorization_code
-code=xxx
-redirect_uri=https://fungames.com/callback
-client_id=xxx
-client_secret=xxx (nếu confidential client)
-code_verifier=xxx (PKCE)
-```
-
-**Response:**
-```json
-{
-  "access_token": "eyJhbGc...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "xxx",
-  "id_token": "eyJhbGc...",
-  "scope": "openid profile"
-}
-```
-
-**b) Refresh Token Grant:**
-```typescript
-grant_type=refresh_token
-refresh_token=xxx
-client_id=xxx
-```
-
-**Token Generation:**
-- Access Token: JWT signed với RS256, expires 1 hour
-- ID Token: JWT theo OIDC spec, chứa user claims
-- Refresh Token: Opaque token, hashed lưu DB, expires 30 days
-
-### 5. UserInfo Endpoint (`/oauth/userinfo`)
-
-```typescript
-GET /oauth/userinfo
-Authorization: Bearer <access_token>
-
-Response:
-{
-  "sub": "user-uuid",
-  "name": "Display Name",
-  "picture": "https://xxx/avatar.jpg",
-  "email": "user@example.com",
-  "wallet_address": "0x...",
-  "camly_balance": 1000
-}
-```
-
-## Security Implementation
-
-### PKCE Verification
-
-```typescript
-// Verify code_verifier matches stored code_challenge
-async function verifyPKCE(verifier: string, challenge: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  const computed = base64UrlEncode(new Uint8Array(hash));
-  return computed === challenge;
-}
-```
-
-### JWT Signing với jose
-
-```typescript
-import { SignJWT, importPKCS8, exportJWK } from 'jose';
-
-async function signToken(payload: object, privateKey: string): Promise<string> {
-  const key = await importPKCS8(privateKey, 'RS256');
-  return new SignJWT(payload)
-    .setProtectedHeader({ alg: 'RS256', kid: 'funid-key-2026' })
-    .setIssuedAt()
-    .setIssuer('https://funprofile-api.funecosystem.org')
-    .setExpirationTime('1h')
-    .sign(key);
-}
-```
-
-### Authorization Code Flow
+Xây dựng hệ thống nhắn tin thời gian thực (Real-time Messaging) cho phép người dùng Fun Profile gửi tin nhắn trực tiếp cho nhau, với khả năng import lịch sử chat từ ứng dụng khác.
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ 1. Client redirects to /oauth/authorize                            │
-│    ?client_id=xxx&redirect_uri=xxx&scope=openid%20profile          │
-│    &state=random&code_challenge=xxx&code_challenge_method=S256     │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ 2. Worker validates client_id, redirect_uri                         │
-│    → Redirect to Frontend: /oauth/consent?...encrypted_params       │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ 3. Frontend shows consent screen (or auto-approve if consented)     │
-│    User clicks "Allow" → POST /oauth/authorize/callback             │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ 4. Worker generates authorization code                              │
-│    → Store in oauth_authorization_codes (expires 10 min)            │
-│    → Redirect to client redirect_uri?code=xxx&state=xxx             │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ 5. Client exchanges code at /oauth/token                            │
-│    → Verify PKCE, client credentials                                │
-│    → Return access_token, id_token, refresh_token                   │
+│                     FUN PROFILE MESSAGING                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────┐     ┌─────────────────┐     ┌──────────────┐  │
+│  │  Conversations  │     │     Messages    │     │   Realtime   │  │
+│  │  (Danh sách)    │────▶│  (Tin nhắn)     │◀───│   Supabase   │  │
+│  └─────────────────┘     └─────────────────┘     └──────────────┘  │
+│          │                       │                                  │
+│          ▼                       ▼                                  │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                    SUPABASE DATABASE                         │   │
+│  │  ┌────────────────┐  ┌────────────────┐  ┌───────────────┐  │   │
+│  │  │  conversations │  │    messages    │  │ conversation_ │  │   │
+│  │  │  (hội thoại)   │  │  (tin nhắn)    │  │  participants │  │   │
+│  │  └────────────────┘  └────────────────┘  └───────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Secrets cần thêm vào Cloudflare
+---
 
-| Secret | Mô tả |
-|--------|-------|
-| `FUNID_RSA_PRIVATE_KEY` | RSA Private Key (PEM format) để sign JWTs |
-| `FUNID_RSA_PUBLIC_KEY` | RSA Public Key (PEM format) cho JWKS |
-| `FUNID_RSA_KID` | Key ID identifier (e.g., "funid-key-2026") |
+## Phase 1: Database Schema (30 phút)
 
-**Generate RSA Key Pair (cho user thực hiện):**
-```bash
-# Generate 2048-bit RSA key pair
-openssl genrsa -out private.pem 2048
-openssl rsa -in private.pem -pubout -out public.pem
+### Bảng `conversations` - Quản lý hội thoại
 
-# Set secrets
-wrangler secret put FUNID_RSA_PRIVATE_KEY < private.pem
-wrangler secret put FUNID_RSA_PUBLIC_KEY < public.pem
-wrangler secret put FUNID_RSA_KID
-# Enter: funid-key-2026
+```sql
+CREATE TABLE public.conversations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  type text NOT NULL DEFAULT 'direct' CHECK (type IN ('direct', 'group')),
+  name text,                    -- Tên nhóm (nếu là group chat)
+  avatar_url text,              -- Avatar nhóm
+  last_message_id uuid,         -- Tin nhắn cuối cùng
+  last_message_at timestamptz,  -- Thời gian tin nhắn cuối
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
 ```
 
-## Frontend Changes (Phase 3 Preview)
+### Bảng `conversation_participants` - Thành viên hội thoại
 
-Tạo route `/oauth/consent` trong React app để:
-- Parse OAuth params từ URL
-- Kiểm tra user đã login chưa (redirect to /auth nếu chưa)
-- Hiển thị consent screen với client info và requested scopes
-- POST consent decision về Worker
-
-## Updated wrangler.toml
-
-```toml
-[vars]
-SUPABASE_URL = "https://qoafaznrqkbhrhacffur.supabase.co"
-SUPABASE_ANON_KEY = "..."
-R2_PUBLIC_URL = "https://funprofile-media.funecosystem.org"
-ALLOWED_ORIGINS = "...,https://fungames.com"  # Add OAuth clients
-FUNID_ISSUER = "https://funprofile-api.funecosystem.org"
-FUNID_FRONTEND_URL = "https://soul-spark-web3.lovable.app"
-
-# Secrets (via wrangler secret put):
-# SUPABASE_SERVICE_ROLE_KEY
-# FUNID_RSA_PRIVATE_KEY
-# FUNID_RSA_PUBLIC_KEY
-# FUNID_RSA_KID
+```sql
+CREATE TABLE public.conversation_participants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL,
+  role text DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member')),
+  joined_at timestamptz DEFAULT now(),
+  left_at timestamptz,          -- NULL nếu còn trong nhóm
+  last_read_at timestamptz,     -- Đọc tin nhắn cuối lúc nào
+  is_muted boolean DEFAULT false,
+  UNIQUE(conversation_id, user_id)
+);
 ```
 
-## Updated index.ts Router
+### Bảng `messages` - Tin nhắn
 
-Thêm routes mới vào main router:
+```sql
+CREATE TABLE public.messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id uuid NOT NULL,
+  content text,
+  message_type text DEFAULT 'text' CHECK (message_type IN ('text', 'image', 'video', 'file', 'system')),
+  media_url text,               -- URL hình ảnh/video/file
+  reply_to_id uuid REFERENCES messages(id), -- Trả lời tin nhắn nào
+  is_edited boolean DEFAULT false,
+  is_deleted boolean DEFAULT false,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+```
+
+### RLS Policies
+
+```sql
+-- Chỉ thành viên mới xem được tin nhắn
+CREATE POLICY "Members can view conversation messages"
+  ON messages FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM conversation_participants
+      WHERE conversation_id = messages.conversation_id
+      AND user_id = auth.uid()
+      AND left_at IS NULL
+    )
+  );
+
+-- Chỉ thành viên mới gửi được tin nhắn
+CREATE POLICY "Members can send messages"
+  ON messages FOR INSERT
+  WITH CHECK (
+    auth.uid() = sender_id AND
+    EXISTS (
+      SELECT 1 FROM conversation_participants
+      WHERE conversation_id = messages.conversation_id
+      AND user_id = auth.uid()
+      AND left_at IS NULL
+    )
+  );
+```
+
+---
+
+## Phase 2: API Endpoints trên Cloudflare Worker (2-3 giờ)
+
+### Các endpoints cần triển khai
+
+| Endpoint | Method | Mô tả |
+|----------|--------|-------|
+| `/api/conversations` | GET | Danh sách hội thoại của user |
+| `/api/conversations` | POST | Tạo hội thoại mới |
+| `/api/conversations/:id/messages` | GET | Lấy tin nhắn trong hội thoại |
+| `/api/conversations/:id/messages` | POST | Gửi tin nhắn |
+| `/api/conversations/:id/read` | POST | Đánh dấu đã đọc |
+| `/api/messages/:id` | PATCH | Sửa tin nhắn |
+| `/api/messages/:id` | DELETE | Xóa tin nhắn |
+
+---
+
+## Phase 3: Frontend UI (3-4 giờ)
+
+### 3.1 Trang Messages (`/messages`)
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│  [←]  Tin nhắn                                    [🔍] [✏️ Mới]   │
+├────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ [👤] Nguyễn Văn A                                    14:30  │  │
+│  │      Okay, hẹn gặp lại!                              ✓✓    │  │
+│  ├──────────────────────────────────────────────────────────────┤  │
+│  │ [👤👤] Nhóm dự án FUN                                13:00  │  │
+│  │        @Bạn: Gửi file rồi nhé                        ●     │  │
+│  ├──────────────────────────────────────────────────────────────┤  │
+│  │ [👤] Trần Thị B                                     Hôm qua │  │
+│  │      Cảm ơn bạn nhiều!                               ✓     │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.2 Trang Chat Detail (`/messages/:conversationId`)
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│  [←]  [👤] Nguyễn Văn A                          [📞] [📹] [⋮]   │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│                          Hôm nay                                   │
+│                                                                    │
+│     ┌──────────────────────────────────────┐                       │
+│     │ Chào bạn, bạn khỏe không?            │  14:25                │
+│     └──────────────────────────────────────┘                       │
+│                                                                    │
+│                    ┌──────────────────────────────────────┐        │
+│          14:28     │ Mình khỏe, cảm ơn bạn!               │        │
+│                    └──────────────────────────────────────┘        │
+│                                                                    │
+│     ┌──────────────────────────────────────┐                       │
+│     │ Okay, hẹn gặp lại!                   │  14:30                │
+│     └──────────────────────────────────────┘                       │
+│                                                                    │
+├────────────────────────────────────────────────────────────────────┤
+│  [📎]  Aa nhập tin nhắn...                                 [📤]   │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Components cần tạo
+
+```text
+src/
+├── pages/
+│   ├── Messages.tsx          # Danh sách hội thoại
+│   └── ChatDetail.tsx        # Chi tiết hội thoại
+├── components/
+│   └── messages/
+│       ├── ConversationList.tsx    # Danh sách hội thoại
+│       ├── ConversationItem.tsx    # 1 item hội thoại
+│       ├── MessageList.tsx         # Danh sách tin nhắn
+│       ├── MessageBubble.tsx       # Bubble tin nhắn
+│       ├── MessageInput.tsx        # Ô nhập tin nhắn
+│       └── NewConversationDialog.tsx # Dialog tạo hội thoại mới
+└── hooks/
+    └── useMessages.ts        # Hook quản lý messages với React Query
+```
+
+---
+
+## Phase 4: Real-time với Supabase (1-2 giờ)
+
+### Subscription để nhận tin nhắn mới
 
 ```typescript
-// ===== OAUTH/OIDC PUBLIC ROUTES =====
-if (path === '/.well-known/openid-configuration' && method === 'GET') {
-  return handleOpenIDConfiguration(request, env);
-}
+// useRealtimeMessages.ts
+import { useEffect } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 
-if (path === '/.well-known/jwks.json' && method === 'GET') {
-  return handleJWKS(request, env);
-}
+export function useRealtimeMessages(conversationId: string, onNewMessage: (msg) => void) {
+  useEffect(() => {
+    const channel = supabase
+      .channel(`messages:${conversationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          onNewMessage(payload.new);
+        }
+      )
+      .subscribe();
 
-if (path === '/oauth/authorize' && method === 'GET') {
-  return handleAuthorize(request, env);
-}
-
-if (path === '/oauth/token' && method === 'POST') {
-  return handleToken(request, env);
-}
-
-if (path === '/oauth/userinfo' && method === 'GET') {
-  return handleUserInfo(request, env);
-}
-
-// Callback from frontend consent page
-if (path === '/oauth/authorize/callback' && method === 'POST') {
-  return withAuth(request, env, handleAuthorizeCallback);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversationId, onNewMessage]);
 }
 ```
 
-## Task Breakdown
+---
 
-| Task | File | Ước tính |
-|------|------|----------|
-| 1. Tạo OAuth types | `worker/src/oauth/types.ts` | 30 min |
-| 2. PKCE utilities | `worker/src/utils/pkce.ts` | 30 min |
-| 3. Crypto utilities (JWT signing) | `worker/src/utils/crypto.ts` | 45 min |
-| 4. Discovery endpoint | `worker/src/oauth/discovery.ts` | 30 min |
-| 5. JWKS endpoint | `worker/src/oauth/jwks.ts` | 45 min |
-| 6. Authorize endpoint | `worker/src/oauth/authorize.ts` | 1.5 hours |
-| 7. Token endpoint | `worker/src/oauth/token.ts` | 2 hours |
-| 8. UserInfo endpoint | `worker/src/oauth/userinfo.ts` | 45 min |
-| 9. Update main router | `worker/src/index.ts` | 30 min |
-| 10. Update wrangler.toml | `worker/wrangler.toml` | 15 min |
+## Phase 5 (Tuỳ chọn): Import Chat từ ứng dụng khác (2-3 giờ)
 
-**Tổng thời gian ước tính:** 7-8 hours
+### Hỗ trợ import từ:
 
-## Kế hoạch thực hiện
+| Nguồn | Format | Độ phức tạp |
+|-------|--------|-------------|
+| **Facebook Messenger** | JSON (từ Download Your Data) | Trung bình |
+| **WhatsApp** | TXT export | Đơn giản |
+| **Telegram** | JSON export | Trung bình |
+| **Zalo** | Không hỗ trợ export | Không khả thi |
 
-1. **Step 1:** Tạo các utility files (types, pkce, crypto)
-2. **Step 2:** Implement discovery và JWKS endpoints (public, không cần auth)
-3. **Step 3:** Implement authorize endpoint (redirect flow)
-4. **Step 4:** Implement token endpoint (code exchange, refresh)
-5. **Step 5:** Implement userinfo endpoint
-6. **Step 6:** Update main router và wrangler.toml
-7. **Step 7:** Test với mock client
+### Trang Import Chat (`/messages/import`)
 
-## Lưu ý quan trọng
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│  [←]  Import lịch sử chat                                          │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│   Chọn nguồn để import:                                            │
+│                                                                    │
+│   ┌────────────────────────────────────────────────────────────┐   │
+│   │  [📘] Facebook Messenger                                   │   │
+│   │       Import từ file JSON (Download Your Data)             │   │
+│   └────────────────────────────────────────────────────────────┘   │
+│                                                                    │
+│   ┌────────────────────────────────────────────────────────────┐   │
+│   │  [📗] WhatsApp                                             │   │
+│   │       Import từ file TXT export                            │   │
+│   └────────────────────────────────────────────────────────────┘   │
+│                                                                    │
+│   ┌────────────────────────────────────────────────────────────┐   │
+│   │  [✈️] Telegram                                              │   │
+│   │       Import từ file JSON export                           │   │
+│   └────────────────────────────────────────────────────────────┘   │
+│                                                                    │
+│   ⚠️ Lưu ý: Chỉ tin nhắn văn bản được import.                      │
+│      Hình ảnh và file đính kèm cần upload thủ công.                │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+```
 
-1. **RSA Keys:** User cần generate và set secrets trước khi JWKS/Token endpoints hoạt động
-2. **Frontend Consent:** Phase 3 sẽ build consent UI - hiện tại authorize sẽ redirect với params
-3. **CORS:** Thêm OAuth client origins vào `ALLOWED_ORIGINS`
-4. **Security:** Tất cả tokens đều signed với RS256, PKCE bắt buộc
+### Cách hoạt động Import
+
+1. User upload file export (JSON/TXT)
+2. Hệ thống parse và hiển thị preview
+3. User chọn conversation để import
+4. Map người tham gia với user Fun Profile (nếu có)
+5. Import messages vào database
+
+---
+
+## Timeline ước tính
+
+| Phase | Thời gian | Mô tả |
+|-------|-----------|-------|
+| Phase 1 | 30 phút | Database schema |
+| Phase 2 | 2-3 giờ | API endpoints |
+| Phase 3 | 3-4 giờ | Frontend UI |
+| Phase 4 | 1-2 giờ | Real-time messaging |
+| Phase 5 | 2-3 giờ | Import chat (tuỳ chọn) |
+| **Tổng** | **7-12 giờ** | |
+
+---
+
+## Kết quả mong đợi
+
+1. **Nhắn tin 1-1:** Gửi tin nhắn trực tiếp giữa 2 người
+2. **Nhóm chat:** Tạo và quản lý nhóm chat
+3. **Real-time:** Tin nhắn hiển thị ngay lập tức
+4. **Thông báo:** Badge hiển thị số tin chưa đọc
+5. **Media:** Gửi hình ảnh, video, file
+6. **Import:** Import lịch sử từ Messenger/WhatsApp/Telegram
+
+---
+
+## Phần kỹ thuật bổ sung
+
+### Cấu trúc files mới
+
+```text
+src/
+├── pages/
+│   ├── Messages.tsx
+│   └── ChatDetail.tsx
+├── components/
+│   └── messages/
+│       ├── ConversationList.tsx
+│       ├── ConversationItem.tsx
+│       ├── MessageList.tsx
+│       ├── MessageBubble.tsx
+│       ├── MessageInput.tsx
+│       ├── NewConversationDialog.tsx
+│       └── ImportChatDialog.tsx
+├── hooks/
+│   ├── useConversations.ts
+│   ├── useMessages.ts
+│   └── useRealtimeMessages.ts
+└── lib/
+    └── chat-importers/
+        ├── messenger.ts
+        ├── whatsapp.ts
+        └── telegram.ts
+
+worker/src/
+├── messages/
+│   ├── conversations.ts
+│   ├── messages.ts
+│   └── read-status.ts
+```
+
+### API thêm vào `src/lib/api.ts`
+
+```typescript
+// ========== MESSAGES API ==========
+
+export interface Conversation {
+  id: string;
+  type: 'direct' | 'group';
+  name: string | null;
+  avatar_url: string | null;
+  last_message: Message | null;
+  last_message_at: string | null;
+  unread_count: number;
+  participants: Array<{
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  }>;
+}
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  content: string;
+  message_type: 'text' | 'image' | 'video' | 'file' | 'system';
+  media_url: string | null;
+  reply_to: Message | null;
+  is_edited: boolean;
+  is_deleted: boolean;
+  created_at: string;
+  sender?: {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  };
+}
+
+export async function getConversations(): Promise<ApiResponse<{ conversations: Conversation[] }>>
+export async function createConversation(participantIds: string[], type?: string, name?: string): Promise<...>
+export async function getMessages(conversationId: string, limit?: number, before?: string): Promise<...>
+export async function sendMessage(conversationId: string, content: string, type?: string): Promise<...>
+export async function markAsRead(conversationId: string): Promise<...>
+```
+
