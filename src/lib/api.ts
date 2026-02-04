@@ -402,6 +402,159 @@ export async function deleteComment(
   });
 }
 
+// ========== MESSAGING API ==========
+
+export interface Conversation {
+  id: string;
+  type: 'direct' | 'group';
+  name: string | null;
+  avatar_url: string | null;
+  last_message_at: string | null;
+  last_message?: Message | null;
+  unread_count: number;
+  participants: Array<{
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  }>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  content: string | null;
+  message_type: 'text' | 'image' | 'video' | 'file' | 'system';
+  media_url: string | null;
+  reply_to_id: string | null;
+  is_edited: boolean;
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+  sender?: {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  };
+}
+
+interface ConversationsResponse {
+  conversations: Conversation[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+interface MessagesResponse {
+  messages: Message[];
+  total: number;
+  limit: number;
+}
+
+interface CreateConversationData {
+  participant_ids: string[];
+  type?: 'direct' | 'group';
+  name?: string;
+}
+
+interface SendMessageData {
+  content: string;
+  message_type?: 'text' | 'image' | 'video' | 'file';
+  media_url?: string;
+  reply_to_id?: string;
+}
+
+/**
+ * Get user's conversations
+ */
+export async function getConversations(
+  limit: number = 20,
+  offset: number = 0
+): Promise<ApiResponse<ConversationsResponse>> {
+  return fetchWithAuth<ConversationsResponse>(`/api/conversations?limit=${limit}&offset=${offset}`, {
+    method: 'GET',
+  });
+}
+
+/**
+ * Create a new conversation
+ */
+export async function createConversation(
+  data: CreateConversationData
+): Promise<ApiResponse<{ conversation: Conversation }>> {
+  return fetchWithAuth<{ conversation: Conversation }>('/api/conversations', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Get messages in a conversation
+ */
+export async function getMessages(
+  conversationId: string,
+  limit: number = 50,
+  before?: string
+): Promise<ApiResponse<MessagesResponse>> {
+  let url = `/api/conversations/${conversationId}/messages?limit=${limit}`;
+  if (before) {
+    url += `&before=${encodeURIComponent(before)}`;
+  }
+  return fetchWithAuth<MessagesResponse>(url, {
+    method: 'GET',
+  });
+}
+
+/**
+ * Send a message
+ */
+export async function sendMessage(
+  conversationId: string,
+  data: SendMessageData
+): Promise<ApiResponse<{ message: Message }>> {
+  return fetchWithAuth<{ message: Message }>(`/api/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Mark conversation as read
+ */
+export async function markConversationAsRead(
+  conversationId: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  return fetchWithAuth<{ success: boolean }>(`/api/conversations/${conversationId}/read`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Edit a message
+ */
+export async function editMessage(
+  messageId: string,
+  content: string
+): Promise<ApiResponse<{ message: Message }>> {
+  return fetchWithAuth<{ message: Message }>(`/api/messages/${messageId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content }),
+  });
+}
+
+/**
+ * Delete a message
+ */
+export async function deleteMessageById(
+  messageId: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  return fetchWithAuth<{ success: boolean }>(`/api/messages/${messageId}`, {
+    method: 'DELETE',
+  });
+}
+
 // ========== VIDEO UPLOAD API (R2) ==========
 
 interface VideoPresignResponse {

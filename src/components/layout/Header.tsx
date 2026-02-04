@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Search, Home, Users, Bell, MessageCircle, Menu, LogIn } from 'lucide-react';
 import HeartChakraIcon from '@/components/icons/HeartChakraIcon';
 import { Button } from '@/components/ui/button';
@@ -7,9 +7,18 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import WalletConnect from '@/components/web3/WalletConnect';
 import { useAuth } from '@/contexts/AuthContext';
+import { useConversations } from '@/hooks/useConversations';
 
 const Header: React.FC = () => {
+  const navigate = useNavigate();
   const { user } = useAuth();
+  const { data: conversationsData } = useConversations();
+
+  // Calculate total unread count
+  const totalUnread = conversationsData?.conversations.reduce(
+    (sum, c) => sum + (c.unread_count || 0), 
+    0
+  ) || 0;
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-card border-b border-border shadow-sm">
@@ -50,8 +59,18 @@ const Header: React.FC = () => {
                 <Bell className="h-5 w-5" />
                 <span className="absolute top-1 right-1 h-2 w-2 bg-destructive rounded-full" />
               </Button>
-              <Button variant="ghost" size="icon" className="text-muted-foreground hover:bg-primary/10">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="relative text-muted-foreground hover:bg-primary/10"
+                onClick={() => navigate('/messages')}
+              >
                 <MessageCircle className="h-5 w-5" />
+                {totalUnread > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 flex items-center justify-center bg-destructive text-destructive-foreground text-[10px] font-medium rounded-full">
+                    {totalUnread > 99 ? '99+' : totalUnread}
+                  </span>
+                )}
               </Button>
               
               <WalletConnect />

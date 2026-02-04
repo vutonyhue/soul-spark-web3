@@ -20,6 +20,17 @@ import { handleToken } from './oauth/token';
 import { handleUserInfo } from './oauth/userinfo';
 import type { OAuthEnv } from './oauth/types';
 
+// Messaging Imports
+import {
+  handleGetConversations,
+  handleCreateConversation,
+  handleMarkAsRead,
+  handleGetMessages,
+  handleSendMessage,
+  handleEditMessage,
+  handleDeleteMessage,
+} from './messages/handlers';
+
 // ========== TYPES ==========
 interface Env extends OAuthEnv {
   SUPABASE_URL: string;
@@ -1588,6 +1599,62 @@ export default {
       return withAuth(request, env, (userId, req, e) => 
         handleDeleteComment(userId, commentId, req, e)
       );
+    }
+
+    // ===== MESSAGING ROUTES =====
+    // GET /api/conversations - Protected: list conversations
+    if (path === '/api/conversations' && method === 'GET') {
+      return withAuth(request, env, handleGetConversations);
+    }
+
+    // POST /api/conversations - Protected: create conversation
+    if (path === '/api/conversations' && method === 'POST') {
+      return withAuth(request, env, handleCreateConversation);
+    }
+
+    // GET/POST /api/conversations/:id/messages
+    const conversationMessagesMatch = path.match(/^\/api\/conversations\/([a-f0-9-]+)\/messages$/);
+    if (conversationMessagesMatch) {
+      const conversationId = conversationMessagesMatch[1];
+      
+      if (method === 'GET') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleGetMessages(userId, conversationId, req, e)
+        );
+      }
+      
+      if (method === 'POST') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleSendMessage(userId, conversationId, req, e)
+        );
+      }
+    }
+
+    // POST /api/conversations/:id/read - Protected: mark as read
+    const conversationReadMatch = path.match(/^\/api\/conversations\/([a-f0-9-]+)\/read$/);
+    if (conversationReadMatch && method === 'POST') {
+      const conversationId = conversationReadMatch[1];
+      return withAuth(request, env, (userId, req, e) => 
+        handleMarkAsRead(userId, conversationId, req, e)
+      );
+    }
+
+    // PATCH/DELETE /api/messages/:id - Protected: edit/delete message
+    const messageMatch = path.match(/^\/api\/messages\/([a-f0-9-]+)$/);
+    if (messageMatch) {
+      const messageId = messageMatch[1];
+      
+      if (method === 'PATCH') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleEditMessage(userId, messageId, req, e)
+        );
+      }
+      
+      if (method === 'DELETE') {
+        return withAuth(request, env, (userId, req, e) => 
+          handleDeleteMessage(userId, messageId, req, e)
+        );
+      }
     }
 
     // ===== 404 =====
